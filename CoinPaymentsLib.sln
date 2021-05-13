@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31229.75
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CoinPaymentsLib", "CoinPaymentsLib\CoinPaymentsLib.csproj", "{373904EA-22CC-4826-8C90-7A3CB1895BDA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{2BF1867B-D262-4C4E-AEEE-A83A35227D28}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{373904EA-22CC-4826-8C90-7A3CB1895BDA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{373904EA-22CC-4826-8C90-7A3CB1895BDA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{373904EA-22CC-4826-8C90-7A3CB1895BDA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{373904EA-22CC-4826-8C90-7A3CB1895BDA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2BF1867B-D262-4C4E-AEEE-A83A35227D28}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BF1867B-D262-4C4E-AEEE-A83A35227D28}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BF1867B-D262-4C4E-AEEE-A83A35227D28}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BF1867B-D262-4C4E-AEEE-A83A35227D28}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6A0F28F2-EFF3-498E-9BBA-B8355464F474}
+	EndGlobalSection
+EndGlobal
