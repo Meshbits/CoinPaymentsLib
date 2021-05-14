@@ -9,9 +9,10 @@ namespace zcash.CoinPaymentsLib
     Fast
   }
 
-  public interface PublicKeyPackage
+  public interface KeyPackage
   {
-    string Address { get; }
+    string PublicKey { get; }
+    string PrivateKey { get; }
   }
 
   public interface IOnlineCoinService : IDisposable
@@ -25,7 +26,7 @@ namespace zcash.CoinPaymentsLib
     string BroadcastSignedTx(string signedTx);
     decimal EstimateFee(ConfirmationSpeed speed);
 
-    void ImportPublicKeyPackage(PublicKeyPackage pubkey);
+    void ImportPublicKeyPackage(string pubkey);
 
     void Start();
     void Stop();
@@ -33,9 +34,9 @@ namespace zcash.CoinPaymentsLib
 
   public interface IOfflinelineCoinService : IDisposable
   {
-    PublicKeyPackage generateAddress(string addressType);
+    KeyPackage generateAddress(string addressType);
 
-    string SignTx(string unsignedTx);
+    string SignTx(string unsignedTx, string privateKey);
 
     void Start();
     void Stop();

@@ -1,6 +1,6 @@
 # Coin Payments Integration Library for Zcash
 
-> Working Draft version 0.1
+> Working Draft version 0.2
 
 The CoinPaymentsLib (CPLib) .NET library provides the bridge between
 the Coin Payments (CP) server code and the Zcash account
@@ -10,6 +10,9 @@ The ZAMS runs as a server locally with a CP server or in the same
 private network.
 
 We expect two types of ZAMS deployements: Online ZAMS and Offline ZAMS.
+
+ZAMS are services that we will provide binaries and source code for.
+The CPLib encapsulates the communication with these services in C#.
 
 ## Online ZAMS 
 
@@ -47,7 +50,7 @@ from users of CPLib.
     string BroadcastSignedTx(string signedTx);
     decimal EstimateFee(ConfirmationSpeed speed);
 
-    void ImportPublicKeyPackage(PublicKeyPackage pubkey);
+    string ImportPublicKeyPackage(string pubkey);
 
     void Start();
     void Stop();
@@ -62,19 +65,20 @@ Once constructed, use `Start` to start the service. Before tear-down, call
 ## Account Monitoring
 
 Account Creation must be done from the Offline ZAMS. The result is a 
-public key package (PKP) that contains the information to watch an address.
+Key package (KP) that contains both private key and public key.
 
-Note: For shielded addresses, the PKP also contains a viewing key.
+Note: For shielded addresses, the KP also contains a viewing key.
 This key does not give the ability to spend. The exact contents of
-a PKP is implementation dependent but it will always have
+a KP is implementation dependent but it will always have
 an address.
 
-The PKP must be imported to the online ZAMS. For transport,
-the PKP is JSON serializable.
+The public key of a KP must be imported to the online ZAMS.
 
 ```cs
-void ImportPublicKeyPackage(PublicKeyPackage pubkey);
+string ImportPublicKeyPackage(string pubkey);
 ```
+
+This function returns the address.
 
 Once imported, the online ZAMS will start tracking incoming payments.
 
@@ -158,9 +162,9 @@ of `BroadcastSignedTx` is the transaction ID.
 ```cs
   public interface IOfflinelineCoinService
   {
-    PublicKeyPackage generateAddress();
+    KeyPackage generateAddress();
 
-    string SignTx(string unsignedTx);
+    string SignTx(string unsignedTx, string privateKey);
 
     void Start();
     void Stop();
@@ -170,10 +174,12 @@ of `BroadcastSignedTx` is the transaction ID.
 ## Address Generation
 
 ```cs
-PublicKeyPackage generateAddress(string addressType);
+KeyPackage generateAddress(string addressType);
 ```
 
-`generateAddress` returns a PKP that needs to be copied to the Online ZAMS
+`generateAddress` returns a KP. The secret key
+should be stored by CP and the public key 
+needs to be copied to the Online ZAMS
 and imported. See [Account Monitoring](#account-monitoring).
 
 Zcash supports several types of addresses. At this moment, they
@@ -183,7 +189,7 @@ Zcash will have unified addresses (type U).
 ## Signing a transaction
 
 ```cs
-string SignTx(string unsignedTx);
+string SignTx(string unsignedTx, string privateKey);
 ```
 
 Signs a unsigned transaction created on the Online ZAMS and returns
@@ -191,3 +197,7 @@ the raw transaction for broadcasting.
 
 See [Preparing a spending transaction](#preparing-a-spending-transaction).
 
+# Revisions
+
+- 0.1: Initial version
+- 0.2: Make Offline ZAMS stateless (does not store secret keys)
