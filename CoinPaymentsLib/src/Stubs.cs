@@ -18,7 +18,9 @@ namespace zcash.CoinPaymentsLib
 
     public class ZcashOnlineServiceStub : IOnlineCoinService
     {
-        public string BroadcastSignedTx(string signedTx)
+    public event IOnlineCoinService.AccountUpdate AccountUpdated;
+
+    public string BroadcastSignedTx(string signedTx)
         {
             throw new NotImplementedException();
         }
@@ -43,17 +45,12 @@ namespace zcash.CoinPaymentsLib
             throw new NotImplementedException();
         }
 
-        public void RegisterAccountUpdateListener(IOnlineCoinService.AccountUpdateDelegate listener)
-        {
-            AccountUpdateListeners += listener;
-        }
-
         public void ScanTransaction(byte[] rawTx)
         {
             throw new NotImplementedException();
         }
 
-        public bool ValidateAddress(string address)
+        public bool ValidateAddress(string address, decimal amount)
         {
             throw new NotImplementedException();
         }
@@ -68,19 +65,37 @@ namespace zcash.CoinPaymentsLib
             throw new NotImplementedException();
         }
 
-        private IOnlineCoinService.AccountUpdateDelegate AccountUpdateListeners;
+    public void Dispose()
+    {
+      throw new NotImplementedException();
     }
+  }
 
     public class ZcashOfflineServiceStub : IOfflinelineCoinService
     {
-        public PublicKeyPackage generateAddress()
+    public void Dispose()
+    {
+      throw new NotImplementedException();
+    }
+
+    public PublicKeyPackage generateAddress(string addressType)
+    {
+      throw new NotImplementedException();
+    }
+
+    public string SignTx(string unsignedTx)
         {
             throw new NotImplementedException();
         }
 
-        public string SignTx(string unsignedTx)
-        {
-            throw new NotImplementedException();
-        }
+    public void Start()
+    {
+      throw new NotImplementedException();
     }
+
+    public void Stop()
+    {
+      throw new NotImplementedException();
+    }
+  }
 }
