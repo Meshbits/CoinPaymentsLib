@@ -1,6 +1,6 @@
 # Coin Payments Integration Library for Zcash
 
-> Working Draft version 0.2
+> Working Draft version 0.3
 
 The CoinPaymentsLib (CPLib) .NET library provides the bridge between
 the Coin Payments (CP) server code and the Zcash account
@@ -41,16 +41,18 @@ from users of CPLib.
 ```cs
   public interface IOnlineCoinService : IDisposable
   {
-    public delegate void AccountUpdate(string address, bool reorg);
-    public event AccountUpdate AccountUpdated;
+    Task<bool> ValidateAddress(string address, decimal amount, bool tracked);
+    Task<decimal> GetAddressBalance(string address, uint minConfirmations);
+    Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
+    Task<string> BroadcastSignedTx(string signedTx);
+    Task<Fee> EstimateFee(ConfirmationSpeed speed);
 
-    bool ValidateAddress(string address);
-    decimal GetAddressBalance(string address, uint minConfirmations);
-    string PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
-    string BroadcastSignedTx(string signedTx);
-    decimal EstimateFee(ConfirmationSpeed speed);
+    UInt32 GetCurrentHeight();
+    Task<TxInfo> GetTxInfo();
 
-    string ImportPublicKeyPackage(string pubkey);
+    Task<UInt32> Rescan(UInt32 height);
+
+    void ImportPublicKeyPackage(string pubkey);
 
     void Start();
     void Stop();
@@ -90,19 +92,32 @@ But it will be SLOW.
 ## Incoming payments
 
 If the ZAMS detects a change in the balance of any of the tracked accounts,
-it will notify the listeners registered on the `AccountUpdated` event.
+it will make a REST POST call to a URL specified by a command line option.
 
-Every affected address will be notified. The order is undefined. A
-listener can query the new balance by calling `GetAddressBalance`.
+Example:
 
-Note: Listeners are called if the 0-confirmation balance changes.
+```
+{
+"eventType"   : "incomingTx",
+"txHash" : "5f322ed7628b9603f128f07856e97aaaeaaf58dda569753265f3af0af9a81311",
+"toAddress" : "t1bKe2mUcRSiY4XJdREzyD1WXLHADfncUrq",
+"txOutputIndex" : 0,
+"block" : 1252523
+}
+```
+
+For payments made from CP, `eventType` should be `outgoingTx` when
+the spending transaction is confirmed.
+
+> If the target endpoint does not return 200 OK, the ZAMS must
+retry.
 
 ## Getting Account Balance
 
 Use:
 
 ```cs
-decimal GetAddressBalance(string address, uint minConfirmations);
+Task<decimal> GetAddressBalance(string address, uint minConfirmations);
 ```
 
 If `minConfirmations` is 0, it returns the balance including unconfirmed
@@ -111,23 +126,68 @@ transactions.
 ## Validating an address
 
 ```cs
-bool ValidateAddress(string address, decimal amount);
+bool ValidateAddress(string address, decimal amount, bool tracked);
 ```
 
-`ValidateAddress` checks whether an address is well-formed and known to the ZAMS. If the address was not previously imported, `ValidateAddress` will
-return false.
+`ValidateAddress` checks whether an address is well-formed and known to the ZAMS if `tracked` is true.
 
 > Note: Do we need a more specific error result?
 
 ## Fee Estimation
 
 ```cs
-decimal EstimateFee(ConfirmationSpeed speed);
+Task<Fee> EstimateFee(ConfirmationSpeed speed);
 ```
 
 `EstimateFee` returns an estimation of the transaction fees for a given desired confirmation speed.
 
 Note: The confirmation speed is not guaranteed and is sorely indicative.
+
+Shielded addresses have a fixed fee independent from the transaction size.
+
+## Blockchain Info
+```cs
+UInt32 GetCurrentHeight();
+Task<UInt32> Rescan(UInt32 height);
+```
+
+`GetCurrentHeight` returns the height of the latest block scanned.
+`Rescan` triggers a rescan of the blockchain from a particular height
+and returns the latest block scanned.
+
+> `Rescan` is an expensive operation. While it runs, other operations
+will be suspended.
+
+## Transaction Info
+
+```cs
+public struct TxIn {
+  string txHash;
+  decimal amount;
+  UInt32 voutIndex;
+  string address;
+}
+
+public struct TxOut {
+  decimal amount;
+  string address;
+  string memoHex;
+}
+
+public struct TxInfo {
+  string hash;
+  UInt32 height;
+  TxIn[] inputs;
+  TxOut[] outputs;
+  decimal fee;
+}
+
+Task<TxInfo> GetTxInfo(string txHash);
+```
+
+`GetTxInfo` retrieves transaction information for a past transaction.
+Shielded transactions will only have the data that can be decrypted.
+Other entries will be null.
 
 ## Preparing a spending transaction
 
@@ -137,7 +197,7 @@ current state of the blockchain. It is very difficult to completely create
 a zcash transaction offline.
 
 ```cs
-string PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
+Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
 ```
 
 `PrepareUnsignedTx` has the same function signature as a normal transfer but
@@ -151,7 +211,7 @@ to the network via the Online ZAMS.
 
 Use 
 ```cs
-string BroadcastSignedTx(string signedTx);
+Task<string> BroadcastSignedTx(string signedTx);
 ```
 
 where `signedTx` is the value obtained by signing and the return value
@@ -164,7 +224,7 @@ of `BroadcastSignedTx` is the transaction ID.
   {
     KeyPackage generateAddress();
 
-    string SignTx(string unsignedTx, string privateKey);
+    Task<string> SignTx(string unsignedTx, string privateKey);
 
     void Start();
     void Stop();
@@ -189,7 +249,7 @@ Zcash will have unified addresses (type U).
 ## Signing a transaction
 
 ```cs
-string SignTx(string unsignedTx, string privateKey);
+Task<string> SignTx(string unsignedTx, string privateKey);
 ```
 
 Signs a unsigned transaction created on the Online ZAMS and returns
@@ -201,3 +261,6 @@ See [Preparing a spending transaction](#preparing-a-spending-transaction).
 
 - 0.1: Initial version
 - 0.2: Make Offline ZAMS stateless (does not store secret keys)
+- 0.3: Removed account notification event, added REST webhook,
+added GetTx, GetHeight, Rescan methods, async versions,
+tweaked GetFee
