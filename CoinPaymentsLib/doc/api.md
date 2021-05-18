@@ -1,6 +1,6 @@
 # Coin Payments Integration Library for Zcash
 
-> Working Draft version 0.3
+> Working Draft version 0.4
 
 The CoinPaymentsLib (CPLib) .NET library provides the bridge between
 the Coin Payments (CP) server code and the Zcash account
@@ -41,16 +41,16 @@ from users of CPLib.
 ```cs
   public interface IOnlineCoinService : IDisposable
   {
-    Task<bool> ValidateAddress(string address, decimal amount, bool tracked);
-    Task<decimal> GetAddressBalance(string address, uint minConfirmations);
-    Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
+    Task<bool> ValidateAddress(string address, ulong amount, bool tracked);
+    Task<ulong> GetAddressBalance(string address, uint minConfirmations);
+    Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, ulong amount, ulong fee);
     Task<string> BroadcastSignedTx(string signedTx);
     Task<Fee> EstimateFee(ConfirmationSpeed speed);
 
-    UInt32 GetCurrentHeight();
+    uint GetCurrentHeight();
     Task<TxInfo> GetTxInfo();
 
-    Task<UInt32> Rescan(UInt32 height);
+    Task<uint> Rescan(uint height);
 
     void ImportPublicKeyPackage(string pubkey);
 
@@ -117,16 +117,18 @@ retry.
 Use:
 
 ```cs
-Task<decimal> GetAddressBalance(string address, uint minConfirmations);
+Task<ulong> GetAddressBalance(string address, uint minConfirmations);
 ```
 
 If `minConfirmations` is 0, it returns the balance including unconfirmed
 transactions.
 
+Amounts are given in zatoshis. 100 million (10^8) zatoshis = 1 ZEC
+
 ## Validating an address
 
 ```cs
-bool ValidateAddress(string address, decimal amount, bool tracked);
+bool ValidateAddress(string address, ulong amount, bool tracked);
 ```
 
 `ValidateAddress` checks whether an address is well-formed and known to the ZAMS if `tracked` is true.
@@ -147,8 +149,8 @@ Shielded addresses have a fixed fee independent from the transaction size.
 
 ## Blockchain Info
 ```cs
-UInt32 GetCurrentHeight();
-Task<UInt32> Rescan(UInt32 height);
+uint GetCurrentHeight();
+Task<uint> Rescan(uint height);
 ```
 
 `GetCurrentHeight` returns the height of the latest block scanned.
@@ -163,23 +165,23 @@ will be suspended.
 ```cs
 public struct TxIn {
   string txHash;
-  decimal amount;
-  UInt32 voutIndex;
+  ulong amount;
+  uint voutIndex;
   string address;
 }
 
 public struct TxOut {
-  decimal amount;
+  ulong amount;
   string address;
   string memoHex;
 }
 
 public struct TxInfo {
   string hash;
-  UInt32 height;
+  uint height;
   TxIn[] inputs;
   TxOut[] outputs;
-  decimal fee;
+  ulong fee;
 }
 
 Task<TxInfo> GetTxInfo(string txHash);
@@ -197,7 +199,7 @@ current state of the blockchain. It is very difficult to completely create
 a zcash transaction offline.
 
 ```cs
-Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, decimal amount, decimal fee);
+Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, ulong amount, ulong fee);
 ```
 
 `PrepareUnsignedTx` has the same function signature as a normal transfer but
@@ -235,6 +237,7 @@ of `BroadcastSignedTx` is the transaction ID.
 
 ```cs
 KeyPackage generateAddress(string addressType);
+string generateDiversifiedAddress(string pkey);
 ```
 
 `generateAddress` returns a KP. The secret key
@@ -245,6 +248,24 @@ and imported. See [Account Monitoring](#account-monitoring).
 Zcash supports several types of addresses. At this moment, they
 can be "transparent" (type T) or "shielded" (type Z). In the future,
 Zcash will have unified addresses (type U).
+
+### Transparent Addresses
+
+Transparent addresses behave much like Bitcoin addresses. They are associated with a secret key and a public key.
+
+### Shielded (Sapling) Addresses
+
+Shielded addresses have several key components. The public key (full viewing key) allows the owner
+to recognize his incoming payments by trial decryption. However this process takes ~1 ms due to the compute cost of
+elliptical curve cryptography. If a large number of keys are used, the total decryption time becomes prohibitive.
+However, shielded addresses can share the same decryption key while being different and unlinkable.
+With this method, we would only need to trial decrypt once with the shared incoming viewing key and 
+be able to recognize a payment made to any of the generated addresses. If the decryption is successful, we
+can further identify to which address the payment was made.
+
+To use this feature, call `generateDiversifiedAddress` with the public key from the Key Package 
+returned by `generateAddress`.
+Each call will return a different address which has the same underlying public key. 
 
 ## Signing a transaction
 
@@ -264,3 +285,4 @@ See [Preparing a spending transaction](#preparing-a-spending-transaction).
 - 0.3: Removed account notification event, added REST webhook,
 added GetTx, GetHeight, Rescan methods, async versions,
 tweaked GetFee
+- 0.4: Use diversified addresses, change amount to zatoshis
