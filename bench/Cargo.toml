@@ -1,0 +1,23 @@
+[package]
+name = "zcash_bench"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+hex = "0.4.3"
+anyhow = "1.0.40"
+
+[dependencies.zcash_primitives]
+git = "https://github.com/zcash/librustzcash.git"
+rev = "1b4aab0b76d465e4fe548f230b7c3ebdc398a1a5"
+
+[dependencies.zcash_client_backend]
+git = "https://github.com/zcash/librustzcash.git"
+rev = "1b4aab0b76d465e4fe548f230b7c3ebdc398a1a5"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench"
+harness = false

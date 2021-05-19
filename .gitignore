@@ -3,3 +3,6 @@ packages/
 .vscode/
 bin/
 obj/
+target/
+.idea/
+log/
