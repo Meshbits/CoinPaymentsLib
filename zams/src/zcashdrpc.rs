@@ -11,9 +11,72 @@ pub struct ZcashdConf {
     rpc_password: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TransactionInput {
+    txid: Option<String>,
+    vout: Option<u32>,
+    valueSat: Option<u64>,
+    address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScriptPubKey {
+    addresses: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TransactionOutput {
+    valueSat: u64,
+    scriptPubKey: ScriptPubKey
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransactionShieldedSpend {
+    cv: String,
+    anchor: String,
+    nullifier: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct TransactionShieldedOutput {
+    cv: String,
+    cmu: String,
+    ephemeralKey: String,
+    encCiphertext: String,
+}
+
+//noinspection RsFieldNaming
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct Transaction {
+    txid: String,
+    vin: Vec<TransactionInput>,
+    vout: Vec<TransactionOutput>,
+    vShieldedSpend: Vec<TransactionShieldedSpend>,
+    vShieldedOutput: Vec<TransactionShieldedOutput>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Deserialize)]
+pub struct Block {
+    hash: String,
+    height: u32,
+    anchor: String,
+    bits: String,
+    finalsaplingroot: String,
+    merkleroot: String,
+    nonce: String,
+    previousblockhash: String,
+    time: u64,
+    tx: Vec<Transaction>,
+}
+
 impl ZcashdConf {
     pub fn parse(url: &str, datadir: &str) -> anyhow::Result<ZcashdConf> {
-        let p = Path::new(datadir).join("zcash.conf");
+        let p = Path::new(datadir).join("zams.toml");
         let conf_str = fs::read_to_string(p)?;
         let conf: toml::Value = toml::from_str(&conf_str)?;
         let table = conf.as_table().unwrap();
@@ -73,6 +136,20 @@ pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow:
     Ok(hash)
 }
 
+pub async fn get_block(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<()> {
+    let res = make_json_rpc(client, "getblock", json!([hash, 2]), config).await?;
+    let block: Block = serde_json::from_value(res)?;
+    println!("{:?}", block);
+    Ok(())
+}
+
+pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<()> {
+    let res = make_json_rpc(client, "getrawtransaction", json!([hash, 1]), config).await?;
+    let tx: Transaction = serde_json::from_value(res)?;
+    println!("{:?}", tx);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +162,19 @@ mod tests {
         let client = reqwest::Client::new();
         let hash = get_best_blockhash(&client, &config).await;
         assert!(hash.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_block() {
+        let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
+        let client = reqwest::Client::new();
+        get_block("0000000000dc923074fea472ad53f3ebaa473f74adbd68f7d00d6409e77e17f7", &client, &config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_raw_transaction() {
+        let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
+        let client = reqwest::Client::new();
+        get_raw_transaction("3132d3d8006c94f3385606d3f5aa7a6f49d779a82f599eefcc16290ef448b12c", &client, &config).await.unwrap();
     }
 }
