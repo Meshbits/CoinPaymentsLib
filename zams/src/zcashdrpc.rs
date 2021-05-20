@@ -14,64 +14,60 @@ pub struct ZcashdConf {
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct TransactionInput {
-    txid: Option<String>,
-    vout: Option<u32>,
-    valueSat: Option<u64>,
-    address: Option<String>,
+    pub txid: Option<String>,
+    pub vout: Option<u32>,
+    pub valueSat: Option<u64>,
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ScriptPubKey {
-    addresses: Vec<String>,
+    pub addresses: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct TransactionOutput {
-    valueSat: u64,
-    scriptPubKey: ScriptPubKey
+    pub valueSat: u64,
+    pub scriptPubKey: ScriptPubKey
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TransactionShieldedSpend {
-    cv: String,
-    anchor: String,
-    nullifier: String,
+    pub cv: String,
+    pub anchor: String,
+    pub nullifier: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct TransactionShieldedOutput {
-    cv: String,
-    cmu: String,
-    ephemeralKey: String,
-    encCiphertext: String,
+    pub cv: String,
+    pub cmu: String,
+    pub ephemeralKey: String,
+    pub encCiphertext: String,
 }
 
 //noinspection RsFieldNaming
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct Transaction {
-    txid: String,
-    vin: Vec<TransactionInput>,
-    vout: Vec<TransactionOutput>,
-    vShieldedSpend: Vec<TransactionShieldedSpend>,
-    vShieldedOutput: Vec<TransactionShieldedOutput>,
+    pub txid: String,
+    pub vin: Vec<TransactionInput>,
+    pub vout: Vec<TransactionOutput>,
+    pub vShieldedSpend: Vec<TransactionShieldedSpend>,
+    pub vShieldedOutput: Vec<TransactionShieldedOutput>,
 }
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 pub struct Block {
-    hash: String,
-    height: u32,
-    anchor: String,
-    bits: String,
-    finalsaplingroot: String,
-    merkleroot: String,
-    nonce: String,
-    previousblockhash: String,
-    time: u64,
-    tx: Vec<Transaction>,
+    pub hash: String,
+    pub height: u32,
+    pub anchor: String,
+    pub previousblockhash: String,
+    pub time: u64,
+    pub tx: Vec<Transaction>,
 }
 
 impl ZcashdConf {
@@ -168,7 +164,7 @@ mod tests {
     async fn test_get_block() {
         let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_block("0000000000dc923074fea472ad53f3ebaa473f74adbd68f7d00d6409e77e17f7", &client, &config).await.unwrap();
+        get_block("0000000001c55378be4d0cc4f74ef6ff1bdc558f95f00bd9677d2ed49867bc98", &client, &config).await.unwrap();
     }
 
     #[tokio::test]
