@@ -1,13 +1,13 @@
-use crate::models::{
-    NewAccount, NewBlock, NewTransaction, NewViewingKey, ViewingKey,
-};
+use crate::models::{NewAccount, NewBlock, NewTransaction, NewViewingKey, ViewingKey, NewNote, Account};
 use crate::schema::viewing_keys::dsl::viewing_keys;
 use crate::zcashdrpc::{Block as RpcBlock, Transaction as RpcTx};
 use diesel::pg::upsert::excluded;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use hex::decode;
+use anyhow::Context;
 use zcash_primitives::zip32::DiversifierIndex;
+use diesel::dsl::*;
 
 pub fn establish_connection(database_url: &str) -> PgConnection {
     PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
@@ -40,7 +40,7 @@ pub fn save_transaction(
 ) -> anyhow::Result<()> {
     let tx = NewTransaction {
         block_id,
-        txid: decode(&tx.txid)?,
+        txhash: decode(&tx.txid)?,
     };
 
     diesel::insert_into(crate::schema::transactions::table)
@@ -102,6 +102,60 @@ pub fn make_new_account(
         diversifier_index_high: di.map(|d| d.0),
         diversifier_index_low: di.map(|d| d.1),
         user_id
+    }
+}
+
+pub trait NoteAdaptable {
+    fn put(&self, note: &NewNote) -> anyhow::Result<i32>;
+}
+
+pub struct NoteAdapter {
+    connection: PgConnection,
+}
+
+impl NoteAdapter {
+    pub fn new(database_url: &str) -> NoteAdapter {
+        let connection = establish_connection(database_url);
+        NoteAdapter {
+            connection
+        }
+    }
+}
+
+impl NoteAdaptable for NoteAdapter {
+    fn put(&self, note: &NewNote) -> anyhow::Result<i32> {
+        use crate::schema::notes::columns::id;
+        let note_id = diesel::insert_into(crate::schema::notes::table)
+            .values(note)
+            .on_conflict_do_nothing()
+            .returning(id)
+            .get_result(&self.connection)?;
+        Ok(note_id)
+    }
+}
+
+pub trait AddressBook {
+    fn contains(&self, address: &str) -> anyhow::Result<bool>;
+}
+
+struct TransparentAddressBook {
+    connection: PgConnection,
+}
+
+impl TransparentAddressBook  {
+    pub fn new(connection: PgConnection) -> TransparentAddressBook {
+        TransparentAddressBook {
+            connection
+        }
+    }
+}
+
+impl AddressBook for TransparentAddressBook {
+    fn contains(&self, addr: &str) -> anyhow::Result<bool> {
+        use crate::schema::accounts::dsl::*;
+
+        select(exists(accounts.filter(address.eq(addr))))
+            .get_result(&self.connection).context("db error")
     }
 }
 

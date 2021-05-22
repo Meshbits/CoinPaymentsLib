@@ -1,21 +1,19 @@
-use crate::models::ViewingKey;
-use crate::zcashdrpc::TransactionShieldedOutput;
-use zcash_client_backend::encoding::decode_extended_full_viewing_key;
+use crate::models::{ViewingKey, NewNote, NewTransaction};
+use crate::zcashdrpc::{TransactionShieldedOutput, TransactionShieldedSpend, Transaction};
+use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_payment_address};
 use zcash_client_backend::proto::compact_formats::CompactOutput;
 use zcash_primitives::consensus::{BlockHeight, MainNetwork};
-use zcash_primitives::constants::testnet::HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY;
+use zcash_primitives::constants::testnet::{HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS};
 use zcash_primitives::memo::MemoBytes;
 use zcash_primitives::note_encryption::try_sapling_note_decryption;
 use zcash_primitives::primitives::{Note, PaymentAddress};
+use std::collections::HashSet;
 
 pub fn try_decode(
     vk: &ViewingKey,
     output: &TransactionShieldedOutput,
     height: u32,
 ) -> anyhow::Result<Option<(Note, PaymentAddress, MemoBytes)>> {
-    println!("{} {} {} {}", vk.key, output.cmu, output.ephemeralKey, output.encCiphertext);
-
-
     let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &vk.key)
         .unwrap()
         .unwrap();
@@ -49,11 +47,51 @@ pub fn try_decode(
     Ok(r)
 }
 
+pub trait NullifierDb {
+    fn get(nullifier: &str) -> Option<()>;
+}
+
+pub fn decrypt_shielded_input<NDb: NullifierDb>(
+    input: &TransactionShieldedSpend,
+    nullifier_db: NDb,
+) -> anyhow::Result<()> {
+    todo!();
+}
+
+pub fn decrypt_shielded_output(ivks: &[ViewingKey], output: &TransactionShieldedOutput, vout_index: i32, height: u32) -> anyhow::Result<Vec<NewNote>> {
+    let mut notes = Vec::<NewNote>::new();
+    for ivk in ivks.iter() {
+        match try_decode(ivk, output, height)? {
+            Some((note, address, _)) => {
+                let new_note = NewNote {
+                    tx_id: 0, // tx_id is unknown at this time, because it hasn't been inserted yet
+                    vout_index,
+                    value: note.value as i64,
+                    address: encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &address),
+                    shielded: true,
+                    spent: false
+                };
+                notes.push(new_note);
+            },
+            None => (),
+        }
+    }
+    Ok(notes)
+}
+
+pub fn decrypt_shielded_outputs(ivks: &[ViewingKey], tx: Transaction) -> anyhow::Result<Vec<NewNote>> {
+    let mut notes = Vec::<NewNote>::new();
+    for (vout_index, output) in tx.vShieldedOutput.iter().enumerate() {
+        notes.append(&mut decrypt_shielded_output(ivks, output, vout_index as i32, tx.height.unwrap())?);
+    }
+    Ok(notes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zcashdrpc::{ZcashdConf, get_raw_transaction};
     use crate::testconfig::*;
+    use crate::zcashdrpc::{get_raw_transaction, ZcashdConf};
 
     #[test]
     #[allow(non_snake_case)]
@@ -80,12 +118,22 @@ mod tests {
     async fn test_decode_transaction() {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        let tx = get_raw_transaction("6a4c85706327094bbbbbd90fc2a7386d902cd15677b4e0c2460bccd63d36f178", &client, &config).await.unwrap();
+        let tx = get_raw_transaction(
+            "6a4c85706327094bbbbbd90fc2a7386d902cd15677b4e0c2460bccd63d36f178",
+            &client,
+            &config,
+        )
+        .await
+        .unwrap();
         let ivk = ViewingKey {
             id: 0,
             key: "zxviewtestsapling1qfa3sudalllllleyywsg65vusgex2rht985k25tcl90hruwup258elmatlv7whqqru4c6rtt8uhl428a33ak0h7uy83h9l2j7hx2qanjyr7s0sufmks6y4plnlpxm2cv38ngfpmrq7q7dkpygu6nnw6n80jg7jdtlau2vg8r68pn63ag8q6kzkdxp54g4gv0wy7wcn8sndy526tm7mwgewlulavppjx3qk8sl7av9u3rpy44k7ffyvhs5adz0cs4382rs6jwg32s4xqdcwrv0".to_string()
         };
-        let found = tx.vShieldedOutput.iter().any(|output| try_decode(&ivk, output, tx.height.unwrap()).unwrap().is_some());
+        let found = tx.vShieldedOutput.iter().any(|output| {
+            try_decode(&ivk, output, tx.height.unwrap())
+                .unwrap()
+                .is_some()
+        });
         assert!(found);
     }
 }

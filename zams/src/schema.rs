@@ -20,9 +20,21 @@ table! {
 }
 
 table! {
+    notes (id) {
+        id -> Int4,
+        tx_id -> Int4,
+        vout_index -> Int4,
+        value -> Int8,
+        address -> Varchar,
+        shielded -> Bool,
+        spent -> Bool,
+    }
+}
+
+table! {
     transactions (id) {
         id -> Int4,
-        txid -> Bytea,
+        txhash -> Bytea,
         block_id -> Int4,
     }
 }
@@ -35,11 +47,13 @@ table! {
 }
 
 joinable!(accounts -> viewing_keys (viewing_key_id));
+joinable!(notes -> transactions (tx_id));
 joinable!(transactions -> blocks (block_id));
 
 allow_tables_to_appear_in_same_query!(
     accounts,
     blocks,
+    notes,
     transactions,
     viewing_keys,
 );

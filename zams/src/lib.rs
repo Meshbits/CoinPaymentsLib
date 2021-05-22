@@ -11,6 +11,7 @@ pub mod models;
 pub mod db;
 pub mod signer;
 pub mod decrypt;
+pub mod scanner;
 
 #[cfg(test)]
 pub mod testconfig;

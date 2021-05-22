@@ -12,11 +12,11 @@ CREATE UNIQUE INDEX idx_block_hash ON blocks (
 
 CREATE TABLE transactions (
     id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    txid BYTEA NOT NULL,
+    txhash BYTEA NOT NULL,
     block_id INT NOT NULL,
     CONSTRAINT fk_block FOREIGN KEY(block_id) REFERENCES blocks(id)
 );
 
 CREATE UNIQUE INDEX idx_transaction_hash ON transactions (
-    txid
+    txhash
 );

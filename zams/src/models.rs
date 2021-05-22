@@ -1,4 +1,4 @@
-use crate::schema::{blocks, transactions, accounts, viewing_keys};
+use crate::schema::{blocks, transactions, accounts, viewing_keys, notes};
 
 #[derive(Insertable)]
 #[table_name="blocks"]
@@ -22,13 +22,13 @@ pub struct Block {
 #[table_name="transactions"]
 pub struct NewTransaction {
     pub block_id: i32,
-    pub txid: Vec<u8>,
+    pub txhash: Vec<u8>,
 }
 
 #[derive(Queryable, Debug)]
 pub struct Transaction {
     pub id: i32,
-    pub txid: Vec<u8>,
+    pub txhash: Vec<u8>,
     pub block_id: i32,
 }
 
@@ -62,4 +62,26 @@ pub struct Account {
     pub diversifier_index_high: Option<i64>,
     pub diversifier_index_low: Option<i64>,
     pub user_id: Option<i32>,
+}
+
+#[derive(Insertable, Debug)]
+#[table_name="notes"]
+pub struct NewNote {
+    pub tx_id: i32,
+    pub vout_index: i32,
+    pub value: i64,
+    pub address: String,
+    pub shielded: bool,
+    pub spent: bool,
+}
+
+#[derive(Queryable, Debug)]
+pub struct Note {
+    pub id: i32,
+    pub tx_id: i32,
+    pub vout_index: i32,
+    pub value: i64,
+    pub address: String,
+    pub shielded: bool,
+    pub spent: bool,
 }

@@ -14,7 +14,7 @@ pub struct ZcashdConf {
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct TransactionInput {
-    pub txid: Option<String>,
+    pub txhash: Option<String>,
     pub vout: Option<u32>,
     pub valueSat: Option<u64>,
     pub address: Option<String>,
@@ -149,6 +149,8 @@ pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdCon
 mod tests {
     use super::*;
     use crate::testconfig::*;
+    use crate::decrypt::decrypt_shielded_outputs;
+    use crate::models::ViewingKey;
 
     #[tokio::test]
     async fn test_get_best_blockchain() {
@@ -171,5 +173,19 @@ mod tests {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
         get_raw_transaction("02ab7cdebad446f0963f58146ec154f8a95cc9c594450c83ba6b0e2996cf839d", &client, &config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_scan_transaction() {
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let client = reqwest::Client::new();
+        let tx = get_raw_transaction("a24b26d7b214e24e965c92aad6a5403dbfadfb007c36fe3ef1e08246653d5b37", &client, &config).await.unwrap();
+        let ivk = ViewingKey {
+            id: 0,
+            key: "zxviewtestsapling1qfa3sudalllllleyywsg65vusgex2rht985k25tcl90hruwup258elmatlv7whqqru4c6rtt8uhl428a33ak0h7uy83h9l2j7hx2qanjyr7s0sufmks6y4plnlpxm2cv38ngfpmrq7q7dkpygu6nnw6n80jg7jdtlau2vg8r68pn63ag8q6kzkdxp54g4gv0wy7wcn8sndy526tm7mwgewlulavppjx3qk8sl7av9u3rpy44k7ffyvhs5adz0cs4382rs6jwg32s4xqdcwrv0".to_string(),
+        };
+        let ivks = vec!(ivk);
+        let notes = decrypt_shielded_outputs(&ivks, tx).unwrap();
+        assert!(!notes.is_empty());
     }
 }
