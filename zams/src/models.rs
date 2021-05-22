@@ -49,7 +49,8 @@ pub struct ViewingKey {
 pub struct NewAccount {
     pub address: String,
     pub viewing_key_id: Option<i32>,
-    pub diversifier_index: Option<i32>,
+    pub diversifier_index_high: Option<i64>,
+    pub diversifier_index_low: Option<i64>,
     pub user_id: Option<i32>,
 }
 
@@ -58,6 +59,7 @@ pub struct Account {
     pub id: i32,
     pub address: String,
     pub viewing_key_id: Option<i32>,
-    pub diversifier_index: Option<i32>,
+    pub diversifier_index_high: Option<i64>,
+    pub diversifier_index_low: Option<i64>,
     pub user_id: Option<i32>,
 }

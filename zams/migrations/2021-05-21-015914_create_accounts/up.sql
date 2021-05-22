@@ -11,7 +11,8 @@ CREATE TABLE accounts (
     id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     address VARCHAR(120) NOT NULL,
     viewing_key_id INT,
-    diversifier_index INT,
+    diversifier_index_high BIGINT,
+    diversifier_index_low BIGINT,
     user_id INT,
     CONSTRAINT fk_viewing_key FOREIGN KEY (viewing_key_id) REFERENCES viewing_keys(id)
 );

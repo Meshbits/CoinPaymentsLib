@@ -3,7 +3,8 @@ table! {
         id -> Int4,
         address -> Varchar,
         viewing_key_id -> Nullable<Int4>,
-        diversifier_index -> Nullable<Int4>,
+        diversifier_index_high -> Nullable<Int8>,
+        diversifier_index_low -> Nullable<Int8>,
         user_id -> Nullable<Int4>,
     }
 }

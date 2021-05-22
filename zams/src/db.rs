@@ -1,18 +1,20 @@
-use diesel::prelude::*;
-use diesel::pg::PgConnection;
-use crate::zcashdrpc::{Transaction as RpcTx, Block as RpcBlock};
-use crate::models::{Transaction, NewTransaction, Block, NewBlock, NewAccount, Account,
-    NewViewingKey};
-use hex::decode;
+use crate::models::{
+    NewAccount, NewBlock, NewTransaction, NewViewingKey, ViewingKey,
+};
+use crate::schema::viewing_keys::dsl::viewing_keys;
+use crate::zcashdrpc::{Block as RpcBlock, Transaction as RpcTx};
 use diesel::pg::upsert::excluded;
+use diesel::pg::PgConnection;
+use diesel::prelude::*;
+use hex::decode;
+use zcash_primitives::zip32::DiversifierIndex;
 
 pub fn establish_connection(database_url: &str) -> PgConnection {
-    PgConnection::establish(&database_url)
-        .expect(&format!("Error connecting to {}", database_url))
+    PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
 }
 
 pub fn save_block(block: &RpcBlock, connection: &PgConnection) -> anyhow::Result<i32> {
-    use crate::schema::blocks::columns::{id, hash};
+    use crate::schema::blocks::columns::{hash, id};
     let block = NewBlock {
         height: block.height as i32,
         anchor: decode(&block.anchor)?,
@@ -31,7 +33,11 @@ pub fn save_block(block: &RpcBlock, connection: &PgConnection) -> anyhow::Result
     Ok(block_id)
 }
 
-pub fn save_transaction(tx: &RpcTx, block_id: i32, connection: &PgConnection) -> anyhow::Result<()> {
+pub fn save_transaction(
+    tx: &RpcTx,
+    block_id: i32,
+    connection: &PgConnection,
+) -> anyhow::Result<()> {
     let tx = NewTransaction {
         block_id,
         txid: decode(&tx.txid)?,
@@ -49,7 +55,7 @@ pub fn save_viewing_key(viewing_key: &str, connection: &PgConnection) -> anyhow:
     use crate::schema::viewing_keys::columns::{id, key};
 
     let ivk = NewViewingKey {
-        key: viewing_key.to_string()
+        key: viewing_key.to_string(),
     };
     let viewing_key_id = diesel::insert_into(crate::schema::viewing_keys::table)
         .values(&ivk)
@@ -71,6 +77,34 @@ pub fn save_account(account: &NewAccount, connection: &PgConnection) -> anyhow::
     Ok(())
 }
 
+pub fn read_ivks(connection: &PgConnection) -> anyhow::Result<Vec<ViewingKey>> {
+    let results: Vec<ViewingKey> = viewing_keys.load::<ViewingKey>(connection)?;
+    Ok(results)
+}
+
+pub fn make_new_account(
+    address: &str,
+    viewing_key_id: Option<i32>,
+    diversifier: Option<DiversifierIndex>,
+    user_id: Option<i32>
+) -> NewAccount {
+    let di = diversifier.map(|d| {
+        let mut bytes = [0u8; 16];
+        bytes[..11].copy_from_slice(&d.0);
+        let di = u128::from_le_bytes(bytes);
+        let hi = (di << 64) as i64;
+        let lo = di as i64; // truncate
+        (hi, lo)
+    });
+    NewAccount {
+        address: address.to_string(),
+        viewing_key_id,
+        diversifier_index_high: di.map(|d| d.0),
+        diversifier_index_low: di.map(|d| d.1),
+        user_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,18 +116,20 @@ mod tests {
             hash: "0000000001c55378be4d0cc4f74ef6ff1bdc558f95f00bd9677d2ed49867bc98".to_string(),
             height: 1255004,
             anchor: "ad0c5cf26bb4d94571387f95fb7c1eab535bc2adbac4b3aad2496505515dc2f6".to_string(),
-            previousblockhash: "000000000073a2e6f7b9c730e8293ea00786dc73b5bafb438708091fe6625b30".to_string(),
+            previousblockhash: "000000000073a2e6f7b9c730e8293ea00786dc73b5bafb438708091fe6625b30"
+                .to_string(),
             time: 1621434320,
-            tx: vec![]
+            tx: vec![],
         };
         let id = save_block(&block, &connection).unwrap();
 
         let tx = RpcTx {
             txid: "3132d3d8006c94f3385606d3f5aa7a6f49d779a82f599eefcc16290ef448b12c".to_string(),
+            height: Some(1255004),
             vin: vec![],
             vout: vec![],
             vShieldedSpend: vec![],
-            vShieldedOutput: vec![]
+            vShieldedOutput: vec![],
         };
         save_transaction(&tx, id, &connection).unwrap();
     }
@@ -104,7 +140,8 @@ mod tests {
         let account = NewAccount {
             address: "ztestsapling1uleg00fxnx67pyf5jjfhx2t5f025rll6se4vutwr7qxav4894xv623vrwf3z6x2kt5d4wn7ywjc".to_string(),
             viewing_key_id: None,
-            diversifier_index: None,
+            diversifier_index_high: None,
+            diversifier_index_low: None,
             user_id: None
         };
         save_account(&account, &connection).unwrap();
@@ -113,7 +150,8 @@ mod tests {
         let account = NewAccount {
             address: "ztestsapling12hqwav6cu8zs4pd7gdwpxyccv6kuydvsxy92dzs28nzv2ccnctxh7fhdf8xmz0ky98lmcmflj9g".to_string(),
             viewing_key_id: Some(viewing_key_id),
-            diversifier_index: Some(0),
+            diversifier_index_high: Some(0),
+            diversifier_index_low: Some(2),
             user_id: Some(14)
         };
         save_account(&account, &connection).unwrap();

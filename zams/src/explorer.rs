@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let port = opts.port;
     let zcashd_url = opts.zcashd_url;
     let datadir = opts.datadir;
-    let config = ZcashdConf::parse(&zcashd_url, &datadir)?;
+    let _config = ZcashdConf::parse(&zcashd_url, &datadir)?;
 
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
     let exporer = Explorer::new();

@@ -1,4 +1,3 @@
-use bip39::{Mnemonic, Language, Seed};
 use tiny_hderive::bip32::ExtendedPrivKey;
 use secp256k1::{Secp256k1, SecretKey, PublicKey, All};
 use zcash_primitives::legacy::TransparentAddress;
@@ -7,12 +6,11 @@ use zcash_client_backend::encoding::{encode_transparent_address, encode_extended
 use zcash_primitives::constants::testnet::{B58_PUBKEY_ADDRESS_PREFIX, B58_SCRIPT_ADDRESS_PREFIX, HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS};
 use zcash_primitives::zip32::{ExtendedSpendingKey, ChildIndex, ExtendedFullViewingKey, DiversifierIndex};
 use tiny_hderive::bip44::DerivationPath;
-use std::str::FromStr;
 use anyhow::{Context, anyhow};
 
 pub trait Signer {
     fn generate_keys(&self, path: &str) -> String;
-    fn generate_address(&self, key: &str, diversifier_index: u64) -> anyhow::Result<String>;
+    fn generate_address(&self, key: &str, diversifier_index: DiversifierIndex) -> anyhow::Result<(String, DiversifierIndex)>;
 }
 
 pub struct TransparentSigner {
@@ -42,7 +40,7 @@ impl Signer for TransparentSigner {
         address
     }
 
-    fn generate_address(&self, key: &str, diversifier_index: u64) -> anyhow::Result<String> {
+    fn generate_address(&self, _key: &str, _diversifier_index: DiversifierIndex) -> anyhow::Result<(String, DiversifierIndex)> {
         todo!()
     }
 }
@@ -78,19 +76,19 @@ impl Signer for SaplingSigner {
         encode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &fvk)
     }
 
-    fn generate_address(&self, key: &str, diversifier_index: u64) -> anyhow::Result<String> {
+    fn generate_address(&self, key: &str, mut diversifier_index: DiversifierIndex) -> anyhow::Result<(String, DiversifierIndex)> {
         let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, key)?.context("Invalid key")?;
-        let mut di = [0u8; 11];
-        di[..8].copy_from_slice(&diversifier_index.to_be_bytes());
-        let di = DiversifierIndex(di);
-        let (_, pa) = fvk.address(di).map_err(|_| anyhow!("Invalid diversifier"))?;
-        Ok(encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &pa))
+        diversifier_index.increment().map_err(|_| anyhow::anyhow!("Out of diversifier indexes"))?;
+        let (di, pa) = fvk.address(diversifier_index).map_err(|_| anyhow!("Invalid diversifier"))?;
+        let address = encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &pa);
+        Ok((address, di))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{save_viewing_key, save_account, establish_connection, make_new_account};
 
     #[test]
     pub fn test_generate_transparent() {
@@ -108,7 +106,25 @@ mod tests {
         let signer = SaplingSigner::new(&seed);
         let fvk = signer.generate_keys("m/0/2147483647'");
         assert_eq!(fvk, "zxviewtestsapling1qfa3sudalllllleyywsg65vusgex2rht985k25tcl90hruwup258elmatlv7whqqru4c6rtt8uhl428a33ak0h7uy83h9l2j7hx2qanjyr7s0sufmks6y4plnlpxm2cv38ngfpmrq7q7dkpygu6nnw6n80jg7jdtlau2vg8r68pn63ag8q6kzkdxp54g4gv0wy7wcn8sndy526tm7mwgewlulavppjx3qk8sl7av9u3rpy44k7ffyvhs5adz0cs4382rs6jwg32s4xqdcwrv0");
-        let address = signer.generate_address(&fvk, 0).unwrap();
+        let (address, _) = signer.generate_address(&fvk, DiversifierIndex::new()).unwrap();
         assert_eq!(address, "ztestsapling10g928q68yrsucpvu9jz55q5arpy756mqfmyqnyugk7q8rstnxy74n2j5xxjvz5vpq62e5vp7k5r");
+    }
+
+    #[test]
+    pub fn test_populate_10_addresses() {
+        let connection = establish_connection("postgres://hanh@localhost/zamsdb");
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(&hex::decode("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap());
+        let signer = SaplingSigner::new(&seed);
+        let fvk = signer.generate_keys("m/0/2147483647'");
+        let viewing_key_id = save_viewing_key(&fvk, &connection).unwrap();
+        let mut di = DiversifierIndex::new();
+        for i in 0..10 {
+            let (address, di2) = signer.generate_address(&fvk, di).unwrap();
+            di = di2;
+            println!("{} {} {:?}", address, i, di);
+            let account = make_new_account(&address, Some(viewing_key_id), Some(di2), None);
+            save_account(&account, &connection).unwrap();
+        }
     }
 }

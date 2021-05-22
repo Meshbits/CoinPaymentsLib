@@ -53,13 +53,13 @@ pub struct TransactionShieldedOutput {
 #[allow(non_snake_case)]
 pub struct Transaction {
     pub txid: String,
+    pub height: Option<u32>,
     pub vin: Vec<TransactionInput>,
     pub vout: Vec<TransactionOutput>,
     pub vShieldedSpend: Vec<TransactionShieldedSpend>,
     pub vShieldedOutput: Vec<TransactionShieldedOutput>,
 }
 
-#[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 pub struct Block {
     pub hash: String,
@@ -132,29 +132,27 @@ pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow:
     Ok(hash)
 }
 
-pub async fn get_block(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<()> {
+pub async fn get_block(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Block> {
     let res = make_json_rpc(client, "getblock", json!([hash, 2]), config).await?;
-    let block: Block = serde_json::from_value(res)?;
-    println!("{:?}", block);
-    Ok(())
+    println!("{}", res);
+    let block: Block = serde_json::from_value(res).unwrap();
+    Ok(block)
 }
 
-pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<()> {
+pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Transaction> {
     let res = make_json_rpc(client, "getrawtransaction", json!([hash, 1]), config).await?;
     let tx: Transaction = serde_json::from_value(res)?;
-    println!("{:?}", tx);
-    Ok(())
+    Ok(tx)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    const ZCASHD_URL: &str = "http://127.0.0.1:8232";
-    const DATADIR: &str = "/home/hanh/zcash-main";
+    use crate::testconfig::*;
 
     #[tokio::test]
     async fn test_get_best_blockchain() {
-        let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
         let hash = get_best_blockhash(&client, &config).await;
         assert!(hash.is_ok());
@@ -162,15 +160,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_block() {
-        let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_block("0000000001c55378be4d0cc4f74ef6ff1bdc558f95f00bd9677d2ed49867bc98", &client, &config).await.unwrap();
+        get_block("00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c", &client, &config).await.unwrap();
+        // assert!(get_block("0000000000000000000000000000000000000000000000000000000000000000", &client, &config).await.is_ok());
     }
 
     #[tokio::test]
     async fn test_get_raw_transaction() {
-        let config = ZcashdConf::parse(ZCASHD_URL, DATADIR).unwrap();
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_raw_transaction("3132d3d8006c94f3385606d3f5aa7a6f49d779a82f599eefcc16290ef448b12c", &client, &config).await.unwrap();
+        get_raw_transaction("02ab7cdebad446f0963f58146ec154f8a95cc9c594450c83ba6b0e2996cf839d", &client, &config).await.unwrap();
     }
 }
