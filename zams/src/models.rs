@@ -72,6 +72,7 @@ pub struct NewNote {
     pub value: i64,
     pub address: String,
     pub shielded: bool,
+    pub locked: bool,
     pub spent: bool,
 }
 
@@ -83,5 +84,6 @@ pub struct Note {
     pub value: i64,
     pub address: String,
     pub shielded: bool,
+    pub locked: bool,
     pub spent: bool,
 }

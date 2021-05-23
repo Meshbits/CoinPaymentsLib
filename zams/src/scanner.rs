@@ -16,6 +16,7 @@ pub fn check_transparent_output<AB: AddressBook>(
                 value: vout.valueSat as i64,
                 address: addr.clone(),
                 shielded: false,
+                locked: false,
                 spent: false,
             };
             notes.push(new_note);

@@ -134,7 +134,6 @@ pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow:
 
 pub async fn get_block(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Block> {
     let res = make_json_rpc(client, "getblock", json!([hash, 2]), config).await?;
-    println!("{}", res);
     let block: Block = serde_json::from_value(res).unwrap();
     Ok(block)
 }

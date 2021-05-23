@@ -1,13 +1,15 @@
-use crate::models::{NewAccount, NewBlock, NewTransaction, NewViewingKey, ViewingKey, NewNote, Account};
+use crate::models::{
+    Account, NewAccount, NewBlock, NewNote, NewTransaction, NewViewingKey, ViewingKey,
+};
 use crate::schema::viewing_keys::dsl::viewing_keys;
 use crate::zcashdrpc::{Block as RpcBlock, Transaction as RpcTx};
+use anyhow::Context;
+use diesel::dsl::*;
 use diesel::pg::upsert::excluded;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use hex::decode;
-use anyhow::Context;
 use zcash_primitives::zip32::DiversifierIndex;
-use diesel::dsl::*;
 
 pub fn establish_connection(database_url: &str) -> PgConnection {
     PgConnection::establish(&database_url).expect(&format!("Error connecting to {}", database_url))
@@ -37,18 +39,22 @@ pub fn save_transaction(
     tx: &RpcTx,
     block_id: i32,
     connection: &PgConnection,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<i32> {
+    use crate::schema::transactions::columns::{txhash, id};
     let tx = NewTransaction {
         block_id,
         txhash: decode(&tx.txid)?,
     };
 
-    diesel::insert_into(crate::schema::transactions::table)
+    let tx_id = diesel::insert_into(crate::schema::transactions::table)
         .values(&tx)
-        .on_conflict_do_nothing()
-        .execute(connection)
+        .on_conflict(txhash)
+        .do_update()
+        .set(txhash.eq(excluded(txhash)))
+        .returning(id)
+        .get_result(connection)
         .expect("Error saving tx");
-    Ok(())
+    Ok(tx_id)
 }
 
 pub fn save_viewing_key(viewing_key: &str, connection: &PgConnection) -> anyhow::Result<i32> {
@@ -77,6 +83,15 @@ pub fn save_account(account: &NewAccount, connection: &PgConnection) -> anyhow::
     Ok(())
 }
 
+pub fn save_note(note: &NewNote, connection: &PgConnection) -> anyhow::Result<()> {
+    diesel::insert_into(crate::schema::notes::table)
+        .values(note)
+        .on_conflict_do_nothing()
+        .execute(connection)
+        .expect("Error saving note");
+    Ok(())
+}
+
 pub fn read_ivks(connection: &PgConnection) -> anyhow::Result<Vec<ViewingKey>> {
     let results: Vec<ViewingKey> = viewing_keys.load::<ViewingKey>(connection)?;
     Ok(results)
@@ -86,7 +101,7 @@ pub fn make_new_account(
     address: &str,
     viewing_key_id: Option<i32>,
     diversifier: Option<DiversifierIndex>,
-    user_id: Option<i32>
+    user_id: Option<i32>,
 ) -> NewAccount {
     let di = diversifier.map(|d| {
         let mut bytes = [0u8; 16];
@@ -101,7 +116,7 @@ pub fn make_new_account(
         viewing_key_id,
         diversifier_index_high: di.map(|d| d.0),
         diversifier_index_low: di.map(|d| d.1),
-        user_id
+        user_id,
     }
 }
 
@@ -116,9 +131,7 @@ pub struct NoteAdapter {
 impl NoteAdapter {
     pub fn new(database_url: &str) -> NoteAdapter {
         let connection = establish_connection(database_url);
-        NoteAdapter {
-            connection
-        }
+        NoteAdapter { connection }
     }
 }
 
@@ -142,11 +155,9 @@ struct TransparentAddressBook {
     connection: PgConnection,
 }
 
-impl TransparentAddressBook  {
+impl TransparentAddressBook {
     pub fn new(connection: PgConnection) -> TransparentAddressBook {
-        TransparentAddressBook {
-            connection
-        }
+        TransparentAddressBook { connection }
     }
 }
 
@@ -155,7 +166,8 @@ impl AddressBook for TransparentAddressBook {
         use crate::schema::accounts::dsl::*;
 
         select(exists(accounts.filter(address.eq(addr))))
-            .get_result(&self.connection).context("db error")
+            .get_result(&self.connection)
+            .context("db error")
     }
 }
 
@@ -164,7 +176,7 @@ mod tests {
     use super::*;
 
     #[test]
-    pub fn test_save_block() {
+    pub fn test_save_block_tx_note() {
         let connection = establish_connection("postgres://hanh@localhost/zamsdb");
         let block = RpcBlock {
             hash: "0000000001c55378be4d0cc4f74ef6ff1bdc558f95f00bd9677d2ed49867bc98".to_string(),
@@ -185,7 +197,19 @@ mod tests {
             vShieldedSpend: vec![],
             vShieldedOutput: vec![],
         };
-        save_transaction(&tx, id, &connection).unwrap();
+        let tx_id = save_transaction(&tx, id, &connection).unwrap();
+
+        let note = NewNote {
+            tx_id,
+            vout_index: 0,
+            value: 1000000,
+            address: "tmEuJYrkbLTnRSPJJtEuybJHnHxRJ56aNAz".to_string(),
+            shielded: false,
+            locked: false,
+            spent: false,
+        };
+
+        save_note(&note, &connection).unwrap();
     }
 
     #[test]

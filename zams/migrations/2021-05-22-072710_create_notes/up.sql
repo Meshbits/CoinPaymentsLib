@@ -5,6 +5,7 @@ CREATE TABLE notes (
     value BIGINT NOT NULL,
     address VARCHAR(120) NOT NULL,
     shielded BOOL NOT NULL,
+    locked BOOL NOT NULL,
     spent BOOL NOT NULL,
     CONSTRAINT fk_tx FOREIGN KEY (tx_id) REFERENCES transactions(id)
 );

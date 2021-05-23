@@ -27,6 +27,7 @@ table! {
         value -> Int8,
         address -> Varchar,
         shielded -> Bool,
+        locked -> Bool,
         spent -> Bool,
     }
 }

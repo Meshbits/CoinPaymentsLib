@@ -69,6 +69,7 @@ pub fn decrypt_shielded_output(ivks: &[ViewingKey], output: &TransactionShielded
                     value: note.value as i64,
                     address: encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &address),
                     shielded: true,
+                    locked: false,
                     spent: false
                 };
                 notes.push(new_note);

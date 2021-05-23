@@ -122,7 +122,6 @@ mod tests {
         for i in 0..10 {
             let (address, di2) = signer.generate_address(&fvk, di).unwrap();
             di = di2;
-            println!("{} {} {:?}", address, i, di);
             let account = make_new_account(&address, Some(viewing_key_id), Some(di2), None);
             save_account(&account, &connection).unwrap();
         }
