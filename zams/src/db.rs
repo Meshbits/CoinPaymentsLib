@@ -1,6 +1,4 @@
-use crate::models::{
-    Account, NewAccount, NewBlock, NewNote, NewTransaction, NewViewingKey, ViewingKey,
-};
+use crate::models::{Account, NewAccount, NewBlock, NewNote, NewTransaction, NewViewingKey, ViewingKey, NewTransactionAndNotes};
 use crate::schema::viewing_keys::dsl::viewing_keys;
 use crate::zcashdrpc::{Block as RpcBlock, Transaction as RpcTx};
 use anyhow::Context;
@@ -40,14 +38,21 @@ pub fn save_transaction(
     block_id: i32,
     connection: &PgConnection,
 ) -> anyhow::Result<i32> {
-    use crate::schema::transactions::columns::{txhash, id};
     let tx = NewTransaction {
         block_id,
         txhash: decode(&tx.txid)?,
     };
+    save_new_transaction(&tx, connection)
+}
+
+pub fn save_new_transaction(
+    tx: &NewTransaction,
+    connection: &PgConnection,
+) -> anyhow::Result<i32> {
+    use crate::schema::transactions::columns::{txhash, id};
 
     let tx_id = diesel::insert_into(crate::schema::transactions::table)
-        .values(&tx)
+        .values(tx)
         .on_conflict(txhash)
         .do_update()
         .set(txhash.eq(excluded(txhash)))
@@ -89,6 +94,16 @@ pub fn save_note(note: &NewNote, connection: &PgConnection) -> anyhow::Result<()
         .on_conflict_do_nothing()
         .execute(connection)
         .expect("Error saving note");
+    Ok(())
+}
+
+pub fn save_transaction_and_notes(txnotes: &mut NewTransactionAndNotes, connection: &PgConnection) -> anyhow::Result<()> {
+    assert_ne!(txnotes.transaction.block_id, 0);
+    let tx_id = save_new_transaction(&txnotes.transaction, connection)?;
+    for note in txnotes.notes.iter_mut() {
+        note.tx_id = tx_id;
+        save_note(note, connection)?;
+    }
     Ok(())
 }
 

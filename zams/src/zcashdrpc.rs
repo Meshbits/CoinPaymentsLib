@@ -134,7 +134,10 @@ pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow:
 
 pub async fn get_block(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Block> {
     let res = make_json_rpc(client, "getblock", json!([hash, 2]), config).await?;
-    let block: Block = serde_json::from_value(res).unwrap();
+    let mut block: Block = serde_json::from_value(res).unwrap();
+    for tx in block.tx.iter_mut() {
+        tx.height = Some(block.height);
+    }
     Ok(block)
 }
 
@@ -184,7 +187,7 @@ mod tests {
             key: "zxviewtestsapling1qfa3sudalllllleyywsg65vusgex2rht985k25tcl90hruwup258elmatlv7whqqru4c6rtt8uhl428a33ak0h7uy83h9l2j7hx2qanjyr7s0sufmks6y4plnlpxm2cv38ngfpmrq7q7dkpygu6nnw6n80jg7jdtlau2vg8r68pn63ag8q6kzkdxp54g4gv0wy7wcn8sndy526tm7mwgewlulavppjx3qk8sl7av9u3rpy44k7ffyvhs5adz0cs4382rs6jwg32s4xqdcwrv0".to_string(),
         };
         let ivks = vec!(ivk);
-        let notes = decrypt_shielded_outputs(&ivks, tx).unwrap();
+        let notes = decrypt_shielded_outputs(&ivks, &tx).unwrap();
         assert!(!notes.is_empty());
     }
 }

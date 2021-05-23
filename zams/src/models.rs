@@ -18,7 +18,7 @@ pub struct Block {
     pub prevhash: Vec<u8>,
 }
 
-#[derive(Insertable)]
+#[derive(Insertable, Debug)]
 #[table_name="transactions"]
 pub struct NewTransaction {
     pub block_id: i32,
@@ -86,4 +86,10 @@ pub struct Note {
     pub shielded: bool,
     pub locked: bool,
     pub spent: bool,
+}
+
+#[derive(Debug)]
+pub struct NewTransactionAndNotes {
+    pub transaction: NewTransaction,
+    pub notes: Vec<NewNote>,
 }

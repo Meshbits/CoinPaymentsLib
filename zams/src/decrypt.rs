@@ -80,7 +80,7 @@ pub fn decrypt_shielded_output(ivks: &[ViewingKey], output: &TransactionShielded
     Ok(notes)
 }
 
-pub fn decrypt_shielded_outputs(ivks: &[ViewingKey], tx: Transaction) -> anyhow::Result<Vec<NewNote>> {
+pub fn decrypt_shielded_outputs(ivks: &[ViewingKey], tx: &Transaction) -> anyhow::Result<Vec<NewNote>> {
     let mut notes = Vec::<NewNote>::new();
     for (vout_index, output) in tx.vShieldedOutput.iter().enumerate() {
         notes.append(&mut decrypt_shielded_output(ivks, output, vout_index as i32, tx.height.unwrap())?);
