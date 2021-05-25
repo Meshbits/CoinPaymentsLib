@@ -1,5 +1,4 @@
-use crate::models::{Account, NewAccount, NewBlock, NewNote, NewTransaction, NewViewingKey, ViewingKey, NewTransactionAndNotes};
-use crate::schema::viewing_keys::dsl::viewing_keys;
+use crate::models::{Account, NewAccount, NewBlock, NewNote, NewTransaction, NewTransactionAndNotes, NewViewingKey, Note, ViewingKey, Transaction, Block};
 use crate::zcashdrpc::{Block as RpcBlock, Transaction as RpcTx};
 use anyhow::Context;
 use diesel::dsl::*;
@@ -45,11 +44,8 @@ pub fn save_transaction(
     save_new_transaction(&tx, connection)
 }
 
-pub fn save_new_transaction(
-    tx: &NewTransaction,
-    connection: &PgConnection,
-) -> anyhow::Result<i32> {
-    use crate::schema::transactions::columns::{txhash, id};
+pub fn save_new_transaction(tx: &NewTransaction, connection: &PgConnection) -> anyhow::Result<i32> {
+    use crate::schema::transactions::columns::{id, txhash};
 
     let tx_id = diesel::insert_into(crate::schema::transactions::table)
         .values(tx)
@@ -97,7 +93,10 @@ pub fn save_note(note: &NewNote, connection: &PgConnection) -> anyhow::Result<()
     Ok(())
 }
 
-pub fn save_transaction_and_notes(txnotes: &mut NewTransactionAndNotes, connection: &PgConnection) -> anyhow::Result<()> {
+pub fn save_transaction_and_notes(
+    txnotes: &mut NewTransactionAndNotes,
+    connection: &PgConnection,
+) -> anyhow::Result<()> {
     assert_ne!(txnotes.transaction.block_id, 0);
     let tx_id = save_new_transaction(&txnotes.transaction, connection)?;
     for note in txnotes.notes.iter_mut() {
@@ -108,6 +107,7 @@ pub fn save_transaction_and_notes(txnotes: &mut NewTransactionAndNotes, connecti
 }
 
 pub fn read_ivks(connection: &PgConnection) -> anyhow::Result<Vec<ViewingKey>> {
+    use crate::schema::viewing_keys::dsl::viewing_keys;
     let results: Vec<ViewingKey> = viewing_keys.load::<ViewingKey>(connection)?;
     Ok(results)
 }
@@ -137,20 +137,22 @@ pub fn make_new_account(
 
 pub trait NoteAdaptable {
     fn put(&self, note: &NewNote) -> anyhow::Result<i32>;
+    fn list(&self, address: &str, max_height: i32) -> anyhow::Result<Vec<Note>>;
+    fn get_balance(&self, address: &str, max_height: i32) -> anyhow::Result<i64>;
 }
 
-pub struct NoteAdapter {
+pub struct DbNoteAdapter {
     connection: PgConnection,
 }
 
-impl NoteAdapter {
-    pub fn new(database_url: &str) -> NoteAdapter {
+impl DbNoteAdapter {
+    pub fn new(database_url: &str) -> DbNoteAdapter {
         let connection = establish_connection(database_url);
-        NoteAdapter { connection }
+        DbNoteAdapter { connection }
     }
 }
 
-impl NoteAdaptable for NoteAdapter {
+impl NoteAdaptable for DbNoteAdapter {
     fn put(&self, note: &NewNote) -> anyhow::Result<i32> {
         use crate::schema::notes::columns::id;
         let note_id = diesel::insert_into(crate::schema::notes::table)
@@ -159,6 +161,30 @@ impl NoteAdaptable for NoteAdapter {
             .returning(id)
             .get_result(&self.connection)?;
         Ok(note_id)
+    }
+
+    fn list(&self, address2: &str, max_height: i32) -> anyhow::Result<Vec<Note>> {
+        use crate::schema;
+        use crate::schema::notes::columns::*;
+        use crate::schema::notes::dsl::notes;
+        use crate::schema::transactions::dsl::transactions;
+        use crate::schema::blocks::dsl::blocks;
+        use crate::schema::blocks::columns::height;
+
+        let res: Vec<(Note)> = notes
+            .select((id, tx_id, vout_index, value, address, shielded, locked, spent))
+            .inner_join(schema::transactions::table.inner_join(schema::blocks::table))
+            .filter(address.eq(address2).and(spent.ne(true)))
+            .filter(height.le(max_height))
+            .load(&self.connection)?;
+
+        Ok(res)
+    }
+
+    fn get_balance(&self, address: &str, max_height: i32) -> anyhow::Result<i64> {
+        let notes = self.list(address, max_height)?;
+        let balance = notes.iter().map(|n| n.value).sum();
+        Ok(balance)
     }
 }
 
@@ -248,5 +274,39 @@ mod tests {
             user_id: Some(14)
         };
         save_account(&account, &connection).unwrap();
+    }
+
+    #[test]
+    fn test_list_notes() {
+        let notes_adapter = DbNoteAdapter::new("postgres://hanh@localhost/zamsdb");
+        let notes = notes_adapter
+            .list("tmEuJYrkbLTnRSPJJtEuybJHnHxRJ56aNAz", i32::MAX)
+            .unwrap();
+        assert_eq!(notes.len(), 2);
+
+        let notes = notes_adapter
+            .list("tmEuJYrkbLTnRSPJJtEuybJHnHxRJ56aNAz", 1255004)
+            .unwrap();
+        assert_eq!(notes.len(), 1); // the other note is too recent
+
+        let notes = notes_adapter.list("tmDOESNOTEXIST", i32::MAX).unwrap();
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_get_balance() {
+        let notes_adapter = DbNoteAdapter::new("postgres://hanh@localhost/zamsdb");
+        let balance = notes_adapter
+            .get_balance("tmEuJYrkbLTnRSPJJtEuybJHnHxRJ56aNAz", i32::MAX)
+            .unwrap();
+        assert_eq!(balance, 2000000);
+
+        let balance = notes_adapter
+            .get_balance("tmEuJYrkbLTnRSPJJtEuybJHnHxRJ56aNAz", 1255004)
+            .unwrap();
+        assert_eq!(balance, 1000000); // the other note is too recent
+
+        let balance = notes_adapter.get_balance("tmDOESNOTEXIST", i32::MAX).unwrap();
+        assert_eq!(balance, 0);
     }
 }
