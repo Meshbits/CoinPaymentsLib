@@ -1,4 +1,4 @@
-use crate::schema::{blocks, transactions, accounts, viewing_keys, notes};
+use crate::schema::{blocks, transactions, accounts, viewing_keys, notes, sapling_notes};
 
 #[derive(Insertable)]
 #[table_name="blocks"]
@@ -86,6 +86,22 @@ pub struct Note {
     pub shielded: bool,
     pub locked: bool,
     pub spent: bool,
+}
+
+#[derive(Insertable, Debug)]
+#[table_name="sapling_notes"]
+pub struct NewSaplingNote {
+    pub diversifier: Vec<u8>,
+    pub rcm: Vec<u8>,
+    pub nf: Vec<u8>,
+}
+
+#[derive(Queryable, Debug)]
+pub struct SaplingNote {
+    pub id: i32,
+    pub diversifier: Vec<u8>,
+    pub rcm: Vec<u8>,
+    pub nf: Vec<u8>,
 }
 
 #[derive(Debug)]

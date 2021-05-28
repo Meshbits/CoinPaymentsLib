@@ -151,7 +151,7 @@ pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdCon
 mod tests {
     use super::*;
     use crate::testconfig::*;
-    use crate::decrypt::decrypt_shielded_outputs;
+    // use crate::decrypt::decrypt_shielded_outputs;
     use crate::models::ViewingKey;
 
     #[tokio::test]
@@ -163,10 +163,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_make_json_rpc() {
+        let client = reqwest::Client::new();
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let hash = "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c";
+        let res = make_json_rpc(&client, "getblock", json!([hash, 2]), &config).await.unwrap();
+        println!("{}", serde_json::to_string(&res).unwrap());
+    }
+
+    #[tokio::test]
     async fn test_get_block() {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_block("00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c", &client, &config).await.unwrap();
+        let value = get_block("00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c", &client, &config).await.unwrap();
         // assert!(get_block("0000000000000000000000000000000000000000000000000000000000000000", &client, &config).await.is_ok());
     }
 
@@ -187,7 +196,7 @@ mod tests {
             key: "zxviewtestsapling1qfa3sudalllllleyywsg65vusgex2rht985k25tcl90hruwup258elmatlv7whqqru4c6rtt8uhl428a33ak0h7uy83h9l2j7hx2qanjyr7s0sufmks6y4plnlpxm2cv38ngfpmrq7q7dkpygu6nnw6n80jg7jdtlau2vg8r68pn63ag8q6kzkdxp54g4gv0wy7wcn8sndy526tm7mwgewlulavppjx3qk8sl7av9u3rpy44k7ffyvhs5adz0cs4382rs6jwg32s4xqdcwrv0".to_string(),
         };
         let ivks = vec!(ivk);
-        let notes = decrypt_shielded_outputs(&ivks, &tx).unwrap();
-        assert!(!notes.is_empty());
+        // let notes = decrypt_shielded_outputs(&ivks, &tx).unwrap();
+        // assert!(!notes.is_empty());
     }
 }

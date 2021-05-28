@@ -1,22 +1,21 @@
-use crate::models::{ViewingKey, NewNote, NewTransaction};
+use crate::models::{ViewingKey, NewNote, NewTransaction, NewSaplingNote};
 use crate::zcashdrpc::{TransactionShieldedOutput, TransactionShieldedSpend, Transaction};
 use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_payment_address};
 use zcash_client_backend::proto::compact_formats::CompactOutput;
 use zcash_primitives::consensus::{BlockHeight, MainNetwork};
 use zcash_primitives::constants::testnet::{HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS};
 use zcash_primitives::memo::MemoBytes;
-use zcash_primitives::note_encryption::try_sapling_note_decryption;
+// use zcash_primitives::note_encryption::try_sapling_note_decryption;
 use zcash_primitives::primitives::{Note, PaymentAddress};
 use std::collections::HashSet;
+use zcash_primitives::zip32::ExtendedFullViewingKey;
+use zcash_client_backend::welding_rig::ScanningKey;
 
 pub fn try_decode(
-    vk: &ViewingKey,
+    fvk: &ExtendedFullViewingKey,
     output: &TransactionShieldedOutput,
     height: u32,
 ) -> anyhow::Result<Option<(Note, PaymentAddress, MemoBytes)>> {
-    let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &vk.key)
-        .unwrap()
-        .unwrap();
     let ivk = fvk.fvk.vk.ivk();
     let enc_ciphertext = hex::decode(&output.encCiphertext).unwrap();
     let mut cmu = hex::decode(&output.cmu).unwrap();
@@ -61,8 +60,12 @@ pub fn decrypt_shielded_input<NDb: NullifierDb>(
 pub fn decrypt_shielded_output(ivks: &[ViewingKey], output: &TransactionShieldedOutput, vout_index: i32, height: u32) -> anyhow::Result<Vec<NewNote>> {
     let mut notes = Vec::<NewNote>::new();
     for ivk in ivks.iter() {
-        match try_decode(ivk, output, height)? {
+        let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &ivk.key)
+            .unwrap()
+            .unwrap();
+        match try_decode(&fvk, output, height)? {
             Some((note, address, _)) => {
+                let ivk = fvk.fvk.vk.ivk();
                 let new_note = NewNote {
                     tx_id: 0, // tx_id is unknown at this time, because it hasn't been inserted yet
                     vout_index,
@@ -71,6 +74,12 @@ pub fn decrypt_shielded_output(ivks: &[ViewingKey], output: &TransactionShielded
                     shielded: true,
                     locked: false,
                     spent: false
+                };
+                // fvk.nf(&note, ());
+                let sapling_note = NewSaplingNote {
+                    diversifier: address.diversifier().0.to_vec(),
+                    rcm: note.rcm().to_bytes().to_vec(),
+                    nf: note.to_vec()
                 };
                 notes.push(new_note);
             },

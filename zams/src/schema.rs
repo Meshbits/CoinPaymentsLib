@@ -33,6 +33,15 @@ table! {
 }
 
 table! {
+    sapling_notes (id) {
+        id -> Int4,
+        diversifier -> Bytea,
+        rcm -> Bytea,
+        nf -> Bytea,
+    }
+}
+
+table! {
     transactions (id) {
         id -> Int4,
         txhash -> Bytea,
@@ -49,12 +58,14 @@ table! {
 
 joinable!(accounts -> viewing_keys (viewing_key_id));
 joinable!(notes -> transactions (tx_id));
+joinable!(sapling_notes -> notes (id));
 joinable!(transactions -> blocks (block_id));
 
 allow_tables_to_appear_in_same_query!(
     accounts,
     blocks,
     notes,
+    sapling_notes,
     transactions,
     viewing_keys,
 );

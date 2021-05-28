@@ -1,5 +1,5 @@
 use crate::db::AddressBook;
-use crate::decrypt::decrypt_shielded_outputs;
+// use crate::decrypt::decrypt_shielded_outputs;
 use crate::models::{NewNote, NewTransaction, NewTransactionAndNotes, ViewingKey};
 use crate::zcashdrpc::{Block, Transaction, TransactionOutput};
 
@@ -45,7 +45,8 @@ pub fn scan_block<AB: AddressBook>(
     let mut new_transactions = Vec::<NewTransactionAndNotes>::new();
     for tx in block.tx.iter() {
         let mut transparent_notes = check_transparent_outputs(tx, address_book)?;
-        let mut shielded_notes = decrypt_shielded_outputs(ivks, tx)?;
+        // let mut shielded_notes = decrypt_shielded_outputs(ivks, tx)?;
+        let mut shielded_notes = Vec::new();
         if !transparent_notes.is_empty() || !shielded_notes.is_empty() {
             transparent_notes.append(&mut shielded_notes);
             let new_tx = NewTransactionAndNotes {

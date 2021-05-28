@@ -10,7 +10,8 @@ pub mod schema;
 pub mod models;
 pub mod db;
 pub mod signer;
-pub mod decrypt;
+// pub mod decrypt;
+pub mod decrypt2;
 pub mod scanner;
 
 #[cfg(test)]
