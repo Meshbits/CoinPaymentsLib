@@ -1,96 +1,37 @@
-use crate::grpc::compact_tx_streamer_client::CompactTxStreamerClient;
-use crate::grpc::{BlockId, BlockRange};
+use crate::error::WalletError;
+use crate::wallet::shielded_output::ShieldedOutput;
+use crate::CONNECTION_STRING;
 use ff::PrimeField;
-use postgres::fallible_iterator::FallibleIterator;
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row, Statement};
-use prost::bytes::BytesMut;
-use prost::Message as M;
-use protobuf::Message;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
-use tonic::transport::Channel;
 use zcash_client_backend::address::RecipientAddress;
-use zcash_client_backend::data_api::chain::{scan_cached_blocks, validate_chain};
 use zcash_client_backend::data_api::{
-    BlockSource, PrunedBlock, ReceivedTransaction, SentTransaction, WalletRead, WalletWrite,
+    PrunedBlock, ReceivedTransaction, SentTransaction, WalletRead, WalletWrite,
 };
 use zcash_client_backend::encoding::{
     decode_extended_full_viewing_key, decode_payment_address, encode_extended_full_viewing_key,
-    encode_payment_address,
 };
-use zcash_client_backend::proto::compact_formats::CompactBlock;
-use zcash_client_backend::wallet::{AccountId, SpendableNote, WalletShieldedOutput, WalletTx};
-use zcash_client_backend::{data_api, DecryptedOutput};
+use zcash_client_backend::wallet::{AccountId, SpendableNote, WalletTx};
+use zcash_client_backend::DecryptedOutput;
 use zcash_primitives::block::BlockHash;
-use zcash_primitives::consensus::Network::TestNetwork;
 use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
 use zcash_primitives::constants::testnet::{
     HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
 };
 use zcash_primitives::memo::{Memo, MemoBytes};
 use zcash_primitives::merkle_tree::{CommitmentTree, IncrementalWitness};
-use zcash_primitives::sapling::{Diversifier, Node, Note, Nullifier, PaymentAddress, Rseed};
+use zcash_primitives::sapling::{Diversifier, Node, Nullifier, PaymentAddress, Rseed};
 use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::ExtendedFullViewingKey;
 
-const LIGHTNODE_URL: &str = "http://localhost:9067";
-pub const CONNECTION_STRING: &str = "host=localhost dbname=saplingdb user=hanh";
-
-pub struct BlockLightwallet {}
-
-impl BlockSource for BlockLightwallet {
-    type Error = MyError;
-
-    fn with_blocks<F>(
-        &self,
-        from_height: BlockHeight,
-        limit: Option<u32>,
-        mut with_row: F,
-    ) -> Result<(), Self::Error>
-    where
-        F: FnMut(CompactBlock) -> Result<(), Self::Error>,
-    {
-        let mut r = Runtime::new().unwrap();
-        let from_height = u32::from(from_height) + 1;
-        let to_height = from_height.saturating_add(limit.unwrap_or(u32::MAX));
-        r.block_on(async {
-            let mut client = connect_lightnode().await.unwrap();
-            let mut blocks = client
-                .get_block_range(tonic::Request::new(BlockRange {
-                    start: Some(BlockId {
-                        hash: Vec::new(),
-                        height: from_height as u64,
-                    }),
-                    end: Some(BlockId {
-                        hash: Vec::new(),
-                        height: to_height as u64,
-                    }),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            while let Some(cb) = blocks.message().await.unwrap() {
-                println!("{}", cb.height);
-                let mut cb_bytes = BytesMut::with_capacity(cb.encoded_len());
-                cb.encode_raw(&mut cb_bytes);
-                let block = CompactBlock::parse_from_bytes(&cb_bytes).unwrap();
-                with_row(block).unwrap();
-            }
-        });
-        Ok(())
-    }
-}
-
-async fn connect_lightnode() -> anyhow::Result<CompactTxStreamerClient<Channel>> {
-    let channel = tonic::transport::Channel::from_shared(LIGHTNODE_URL)?;
-    let client = CompactTxStreamerClient::connect(channel).await?;
-    Ok(client)
-}
+pub mod init;
+pub mod scan;
+pub mod shielded_output;
 
 pub struct PostgresWallet {
     connection: Arc<RefCell<Client>>,
@@ -110,7 +51,7 @@ pub struct PostgresWallet {
 }
 
 impl PostgresWallet {
-    pub fn new() -> Result<PostgresWallet, MyError> {
+    pub fn new() -> Result<PostgresWallet, WalletError> {
         let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
         let c = Arc::new(RefCell::new(connection));
         let mut connection = c.borrow_mut();
@@ -186,7 +127,7 @@ impl<'a> WalletDbTransaction<'a> {
         block_hash: BlockHash,
         block_time: u32,
         commitment_tree: &CommitmentTree<Node>,
-    ) -> Result<(), MyError> {
+    ) -> Result<(), WalletError> {
         let mut client = &mut self.transaction;
         let mut encoded_tree = Vec::new();
         commitment_tree.write(&mut encoded_tree).unwrap();
@@ -208,7 +149,7 @@ impl<'a> WalletDbTransaction<'a> {
         &mut self,
         tx: &WalletTx<Nullifier>,
         height: BlockHeight,
-    ) -> Result<i32, MyError> {
+    ) -> Result<i32, WalletError> {
         let txid = tx.txid.0.to_vec();
         let row = self.transaction.query_one(
             &self.statements.stmt_upsert_tx_meta,
@@ -217,7 +158,7 @@ impl<'a> WalletDbTransaction<'a> {
         Ok(row.get(0))
     }
 
-    pub fn mark_spent(&mut self, tx_ref: i32, nf: &Nullifier) -> Result<(), MyError> {
+    pub fn mark_spent(&mut self, tx_ref: i32, nf: &Nullifier) -> Result<(), WalletError> {
         self.transaction.execute(
             &self.statements.stmt_mark_received_note_spent,
             &[&tx_ref, &&nf.0[..]],
@@ -225,13 +166,13 @@ impl<'a> WalletDbTransaction<'a> {
         Ok(())
     }
 
-    pub fn update_expired_notes(&mut self, height: BlockHeight) -> Result<(), MyError> {
+    pub fn update_expired_notes(&mut self, height: BlockHeight) -> Result<(), WalletError> {
         self.transaction
             .execute(&self.statements.stmt_update_expired, &[&u32::from(height)])?;
         Ok(())
     }
 
-    pub fn prune_witnesses(&mut self, below_height: BlockHeight) -> Result<(), MyError> {
+    pub fn prune_witnesses(&mut self, below_height: BlockHeight) -> Result<(), WalletError> {
         self.transaction.execute(
             &self.statements.stmt_prune_witnesses,
             &[&u32::from(below_height)],
@@ -244,7 +185,7 @@ impl<'a> WalletDbTransaction<'a> {
         note_id: i32,
         witness: &IncrementalWitness<Node>,
         height: BlockHeight,
-    ) -> Result<(), MyError> {
+    ) -> Result<(), WalletError> {
         let mut encoded = Vec::new();
         witness.write(&mut encoded).unwrap();
 
@@ -260,7 +201,7 @@ impl<'a> WalletDbTransaction<'a> {
         &mut self,
         output: &T,
         tx_ref: i32,
-    ) -> Result<i32, MyError> {
+    ) -> Result<i32, WalletError> {
         let rcm = output.note().rcm().to_repr();
         let account = output.account().0 as i64;
         let diversifier = output.to().diversifier().0.to_vec();
@@ -287,18 +228,18 @@ impl<'a> WalletDbTransaction<'a> {
         self.transaction
             .query_one(&self.statements.stmt_upsert_received_note, sql_args)
             .map(|row| row.get(0))
-            .map_err(MyError::Postgres)
+            .map_err(WalletError::Postgres)
     }
 
     pub fn put_tx_data(
         &mut self,
         tx: &Transaction,
         created_at: Option<time::OffsetDateTime>,
-    ) -> Result<i32, MyError> {
+    ) -> Result<i32, WalletError> {
         let txid = tx.txid().0.to_vec();
 
         let mut raw_tx = vec![];
-        tx.write(&mut raw_tx).map_err(MyError::IO)?;
+        tx.write(&mut raw_tx).map_err(WalletError::IO)?;
 
         self.transaction
             .query_one(
@@ -306,14 +247,14 @@ impl<'a> WalletDbTransaction<'a> {
                 &[&txid, &created_at, &u32::from(tx.expiry_height), &raw_tx],
             )
             .map(|row| row.get(0))
-            .map_err(MyError::Postgres)
+            .map_err(WalletError::Postgres)
     }
 
     pub fn put_sent_decrypted_note(
         &mut self,
         output: &DecryptedOutput,
         tx_ref: i32,
-    ) -> Result<i32, MyError> {
+    ) -> Result<i32, WalletError> {
         let output_index = output.index as i32;
         let account = output.account;
         let value = Amount::from_i64(output.note.value as i64).unwrap();
@@ -337,7 +278,7 @@ impl<'a> WalletDbTransaction<'a> {
         to: &RecipientAddress,
         value: Amount,
         memo: Option<&MemoBytes>,
-    ) -> Result<i32, MyError> {
+    ) -> Result<i32, WalletError> {
         let to_str = to.encode(&Network::TestNetwork);
         self.transaction
             .query_one(
@@ -352,71 +293,12 @@ impl<'a> WalletDbTransaction<'a> {
                 ],
             )
             .map(|row| row.get(0))
-            .map_err(MyError::Postgres)
-    }
-}
-
-pub trait ShieldedOutput {
-    fn index(&self) -> usize;
-    fn account(&self) -> AccountId;
-    fn to(&self) -> &PaymentAddress;
-    fn note(&self) -> &Note;
-    fn memo(&self) -> Option<&MemoBytes>;
-    fn is_change(&self) -> Option<bool>;
-    fn nullifier(&self) -> Option<Nullifier>;
-}
-
-impl ShieldedOutput for WalletShieldedOutput<Nullifier> {
-    fn index(&self) -> usize {
-        self.index
-    }
-    fn account(&self) -> AccountId {
-        self.account
-    }
-    fn to(&self) -> &PaymentAddress {
-        &self.to
-    }
-    fn note(&self) -> &Note {
-        &self.note
-    }
-    fn memo(&self) -> Option<&MemoBytes> {
-        None
-    }
-    fn is_change(&self) -> Option<bool> {
-        Some(self.is_change)
-    }
-
-    fn nullifier(&self) -> Option<Nullifier> {
-        Some(self.nf)
-    }
-}
-
-impl ShieldedOutput for DecryptedOutput {
-    fn index(&self) -> usize {
-        self.index
-    }
-    fn account(&self) -> AccountId {
-        self.account
-    }
-    fn to(&self) -> &PaymentAddress {
-        &self.to
-    }
-    fn note(&self) -> &Note {
-        &self.note
-    }
-    fn memo(&self) -> Option<&MemoBytes> {
-        Some(&self.memo)
-    }
-    fn is_change(&self) -> Option<bool> {
-        None
-    }
-    fn nullifier(&self) -> Option<Nullifier> {
-        None
+            .map_err(WalletError::Postgres)
     }
 }
 
 impl WalletRead for PostgresWallet {
-    type Error = MyError;
+    type Error = WalletError;
     type NoteRef = i32;
     type TxRef = i32;
 
@@ -473,7 +355,7 @@ impl WalletRead for PostgresWallet {
         )?;
         let row = row.map(|row| {
             let addr: String = row.get(0);
-            decode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &addr).map_err(MyError::Bech32)
+            decode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &addr).map_err(WalletError::Bech32)
         });
         row.transpose().map(|r| r.flatten())
     }
@@ -492,9 +374,9 @@ impl WalletRead for PostgresWallet {
             let account_id = AccountId(row.get(0));
             let efvkr =
                 decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, row.get(1))
-                    .map_err(MyError::Bech32)?;
+                    .map_err(WalletError::Bech32)?;
 
-            res.insert(account_id, efvkr.ok_or(MyError::IncorrectHrpExtFvk)?);
+            res.insert(account_id, efvkr.ok_or(WalletError::IncorrectHrpExtFvk)?);
         }
 
         Ok(res)
@@ -533,7 +415,7 @@ impl WalletRead for PostgresWallet {
 
         match Amount::from_i64(balance) {
             Ok(amount) if !amount.is_negative() => Ok(amount),
-            _ => Err(MyError::Error(anyhow::anyhow!(
+            _ => Err(WalletError::Error(anyhow::anyhow!(
                 "Sum of values in received_notes is out of range"
             ))),
         }
@@ -554,7 +436,7 @@ impl WalletRead for PostgresWallet {
         )?;
         let row = row.map(|row| {
             let row_data: Vec<u8> = row.get(0);
-            CommitmentTree::read(&row_data[..]).map_err(MyError::IO)
+            CommitmentTree::read(&row_data[..]).map_err(WalletError::IO)
         });
         row.transpose()
     }
@@ -577,7 +459,7 @@ impl WalletRead for PostgresWallet {
             })
             .collect();
         let witnesses: Result<Vec<_>, _> = witnesses.into_iter().collect();
-        witnesses.map_err(MyError::IO)
+        witnesses.map_err(WalletError::IO)
     }
 
     fn get_nullifiers(&self) -> Result<Vec<(AccountId, Nullifier)>, Self::Error> {
@@ -790,7 +672,7 @@ impl WalletWrite for PostgresWallet {
 
         let sapling_activation_height = Network::TestNetwork
             .activation_height(NetworkUpgrade::Sapling)
-            .ok_or(MyError::Error(anyhow::anyhow!(
+            .ok_or(WalletError::Error(anyhow::anyhow!(
                 "Cannot rewind to before sapling"
             )))?;
 
@@ -831,11 +713,11 @@ impl WalletWrite for PostgresWallet {
     }
 }
 
-fn to_spendable_note(row: &Row) -> Result<SpendableNote, MyError> {
+fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
     let diversifier = {
         let d: Vec<_> = row.get(0);
         if d.len() != 11 {
-            return Err(MyError::Error(anyhow::anyhow!(
+            return Err(WalletError::Error(anyhow::anyhow!(
                 "Invalid diversifier length",
             )));
         }
@@ -852,15 +734,18 @@ fn to_spendable_note(row: &Row) -> Result<SpendableNote, MyError> {
         // We store rcm directly in the data DB, regardless of whether the note
         // used a v1 or v2 note plaintext, so for the purposes of spending let's
         // pretend this is a pre-ZIP 212 note.
-        let rcm =
-            jubjub::Fr::from_repr(rcm_bytes[..].try_into().map_err(|_| MyError::InvalidNote)?)
-                .ok_or(MyError::InvalidNote)?;
+        let rcm = jubjub::Fr::from_repr(
+            rcm_bytes[..]
+                .try_into()
+                .map_err(|_| WalletError::InvalidNote)?,
+        )
+        .ok_or(WalletError::InvalidNote)?;
         Rseed::BeforeZip212(rcm)
     };
 
     let witness = {
         let d: Vec<_> = row.get(3);
-        IncrementalWitness::read(&d[..]).map_err(MyError::IO)?
+        IncrementalWitness::read(&d[..]).map_err(WalletError::IO)?
     };
 
     Ok(SpendableNote {
@@ -871,57 +756,9 @@ fn to_spendable_note(row: &Row) -> Result<SpendableNote, MyError> {
     })
 }
 
-#[derive(Debug)]
-pub enum MyError {
-    Bech32(bech32::Error),
-    IncorrectHrpExtFvk,
-    DataError(data_api::error::Error<i32>),
-    IO(std::io::Error),
-    InvalidNote,
-    Error(anyhow::Error),
-    Postgres(postgres::Error),
-}
-
-impl From<data_api::error::Error<i32>> for MyError {
-    fn from(e: data_api::error::Error<i32>) -> Self {
-        MyError::DataError(e)
-    }
-}
-
-impl From<anyhow::Error> for MyError {
-    fn from(e: anyhow::Error) -> Self {
-        MyError::Error(e)
-    }
-}
-
-impl From<postgres::Error> for MyError {
-    fn from(e: postgres::Error) -> Self {
-        MyError::Postgres(e)
-    }
-}
-
-pub fn validate() -> anyhow::Result<(), MyError> {
-    let source = BlockLightwallet {};
-    validate_chain(&Network::TestNetwork, &source, None)?;
-
-    Ok(())
-}
-
-pub fn scan() -> anyhow::Result<(), MyError> {
-    let source = BlockLightwallet {};
-    let mut data = PostgresWallet::new()?;
-    scan_cached_blocks(&Network::TestNetwork, &source, &mut data, None)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // #[test]
-    fn test_validate() {
-        validate().unwrap();
-    }
 
     #[test]
     fn test_upsert() {

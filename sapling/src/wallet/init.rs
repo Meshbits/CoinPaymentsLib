@@ -86,8 +86,9 @@ pub fn create_tables(client: &mut Client) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use postgres::NoTls;
-    use crate::decrypt::{CONNECTION_STRING, PostgresWallet};
     use zcash_client_backend::data_api::WalletRead;
+    use crate::CONNECTION_STRING;
+    use crate::wallet::PostgresWallet;
 
     #[test]
     fn test_init() {
