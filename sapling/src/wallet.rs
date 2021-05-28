@@ -6,7 +6,7 @@ use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row, Statement};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::sync::Arc;
 use zcash_client_backend::address::RecipientAddress;
 use zcash_client_backend::data_api::{
@@ -135,9 +135,9 @@ impl<'a> WalletDbTransaction<'a> {
         client.execute(
             &self.statements.stmt_insert_block,
             &[
-                &u32::from(block_height),
+                &(u32::from(block_height) as i32),
                 &block_hash.0.to_vec(),
-                &block_time,
+                &(block_time as i32),
                 &encoded_tree,
             ],
         )?;
@@ -168,14 +168,14 @@ impl<'a> WalletDbTransaction<'a> {
 
     pub fn update_expired_notes(&mut self, height: BlockHeight) -> Result<(), WalletError> {
         self.transaction
-            .execute(&self.statements.stmt_update_expired, &[&u32::from(height)])?;
+            .execute(&self.statements.stmt_update_expired, &[&(u32::from(height) as i32)])?;
         Ok(())
     }
 
     pub fn prune_witnesses(&mut self, below_height: BlockHeight) -> Result<(), WalletError> {
         self.transaction.execute(
             &self.statements.stmt_prune_witnesses,
-            &[&u32::from(below_height)],
+            &[&(u32::from(below_height) as i32)],
         )?;
         Ok(())
     }
@@ -191,7 +191,7 @@ impl<'a> WalletDbTransaction<'a> {
 
         self.transaction.execute(
             &self.statements.stmt_insert_witness,
-            &[&note_id, &u32::from(height), &encoded],
+            &[&note_id, &(u32::from(height) as i32), &encoded],
         )?;
 
         Ok(())
@@ -244,7 +244,7 @@ impl<'a> WalletDbTransaction<'a> {
         self.transaction
             .query_one(
                 &self.statements.stmt_upsert_tx_data,
-                &[&txid, &created_at, &u32::from(tx.expiry_height), &raw_tx],
+                &[&txid, &created_at, &(u32::from(tx.expiry_height) as i32), &raw_tx],
             )
             .map(|row| row.get(0))
             .map_err(WalletError::Postgres)
@@ -325,8 +325,8 @@ impl WalletRead for PostgresWallet {
             .connection
             .borrow_mut()
             .query_opt(
-                "SELECT hash FROM blocks WHERE height = ?",
-                &[&u32::from(block_height)],
+                "SELECT hash FROM blocks WHERE height = $1",
+                &[&(u32::from(block_height) as i32)],
             )?
             .map(|row| {
                 let row_data = row.get::<_, Vec<_>>(0);
@@ -339,7 +339,7 @@ impl WalletRead for PostgresWallet {
             .connection
             .borrow_mut()
             .query_opt(
-                "SELECT block FROM transactions WHERE txid = ?",
+                "SELECT block FROM transactions WHERE txid = $1",
                 &[&txid.0.to_vec()],
             )?
             .map(|row| {
@@ -350,7 +350,7 @@ impl WalletRead for PostgresWallet {
 
     fn get_address(&self, account: AccountId) -> Result<Option<PaymentAddress>, Self::Error> {
         let row = self.connection.borrow_mut().query_opt(
-            "SELECT address FROM accounts WHERE account = ?",
+            "SELECT address FROM accounts WHERE account = $1",
             &[&account.0],
         )?;
         let row = row.map(|row| {
@@ -389,7 +389,7 @@ impl WalletRead for PostgresWallet {
     ) -> Result<bool, Self::Error> {
         let mut client = self.connection.borrow_mut();
         let statement =
-            client.prepare("SELECT * FROM accounts WHERE account = ? AND extfvk = ?")?;
+            client.prepare("SELECT * FROM accounts WHERE account = $1 AND extfvk = $2")?;
         let extfvk =
             encode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, extfvk);
 
@@ -407,8 +407,8 @@ impl WalletRead for PostgresWallet {
             .query_opt(
                 "SELECT SUM(value) FROM received_notes
         INNER JOIN transactions ON transactions.id_tx = received_notes.tx
-        WHERE account = ? AND spent IS NULL AND transactions.block <= ?",
-                &[&account.0, &u32::from(anchor_height)],
+        WHERE account = $1 AND spent IS NULL AND transactions.block <= $2",
+                &[&account.0, &(u32::from(anchor_height) as i32)],
             )?
             .map(|row| row.get(0))
             .unwrap_or(0);
@@ -431,8 +431,8 @@ impl WalletRead for PostgresWallet {
     ) -> Result<Option<CommitmentTree<Node>>, Self::Error> {
         let mut client = self.connection.borrow_mut();
         let row = client.query_opt(
-            "SELECT sapling_tree FROM blocks WHERE height = ?",
-            &[&u32::from(block_height)],
+            "SELECT sapling_tree FROM blocks WHERE height = $1",
+            &[&(u32::from(block_height) as i32)],
         )?;
         let row = row.map(|row| {
             let row_data: Vec<u8> = row.get(0);
@@ -447,8 +447,8 @@ impl WalletRead for PostgresWallet {
     ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
         let mut client = self.connection.borrow_mut();
         let mut stmt_fetch_witnesses =
-            client.prepare("SELECT note, witness FROM sapling_witnesses WHERE block = ?")?;
-        let witnesses = client.query(&stmt_fetch_witnesses, &[&u32::from(block_height)])?;
+            client.prepare("SELECT note, witness FROM sapling_witnesses WHERE block = $1")?;
+        let witnesses = client.query(&stmt_fetch_witnesses, &[&(u32::from(block_height) as i32)])?;
 
         let witnesses: Vec<_> = witnesses
             .iter()
@@ -504,7 +504,7 @@ impl WalletRead for PostgresWallet {
         // Select notes
         let notes = client.query(
             &stmt_select_notes,
-            &[&i64::from(account.0), &u32::from(anchor_height)],
+            &[&i64::from(account.0), &(u32::from(anchor_height) as i32)],
         )?;
         let notes: Vec<_> = notes.iter().map(to_spendable_note).collect();
         notes.into_iter().collect()
@@ -690,19 +690,19 @@ impl WalletWrite for PostgresWallet {
             // Decrement witnesses.
             db_tx.execute(
                 "DELETE FROM sapling_witnesses WHERE block > ?",
-                &[&u32::from(block_height)],
+                &[&(u32::from(block_height) as i32)],
             )?;
 
             // Un-mine transactions.
             db_tx.execute(
                 "UPDATE transactions SET block = NULL, tx_index = NULL WHERE block > ?",
-                &[&u32::from(block_height)],
+                &[&(u32::from(block_height) as i32)],
             )?;
 
             // Now that they aren't depended on, delete scanned blocks.
             db_tx.execute(
                 "DELETE FROM blocks WHERE height > ?",
-                &[&u32::from(block_height)],
+                &[&(u32::from(block_height) as i32)],
             )?;
 
             Ok(())
@@ -766,7 +766,7 @@ mod tests {
         let mut client = w.connection.borrow_mut();
         let _ = client.execute(
             &w.stmt_insert_block,
-            &[&1, &vec![0u8; 32], &0, &vec![0u8; 32]],
+            &[&100000, &vec![0u8; 32], &0, &vec![0u8; 32]],
         );
 
         let mut db_tx = WalletDbTransaction {

@@ -115,4 +115,9 @@ mod tests {
     fn test_validate() {
         validate().unwrap();
     }
+
+    #[test]
+    fn test_scan() {
+        scan().unwrap();
+    }
 }
