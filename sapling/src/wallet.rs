@@ -12,9 +12,7 @@ use zcash_client_backend::address::RecipientAddress;
 use zcash_client_backend::data_api::{
     PrunedBlock, ReceivedTransaction, SentTransaction, WalletRead, WalletWrite,
 };
-use zcash_client_backend::encoding::{
-    decode_extended_full_viewing_key, decode_payment_address, encode_extended_full_viewing_key,
-};
+use zcash_client_backend::encoding::{decode_extended_full_viewing_key, decode_payment_address, encode_extended_full_viewing_key, encode_payment_address};
 use zcash_client_backend::wallet::{AccountId, SpendableNote, WalletTx};
 use zcash_client_backend::DecryptedOutput;
 use zcash_primitives::block::BlockHash;
@@ -29,7 +27,6 @@ use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::ExtendedFullViewingKey;
 
-pub mod init;
 pub mod scan;
 pub mod shielded_output;
 
@@ -203,7 +200,7 @@ impl<'a> WalletDbTransaction<'a> {
         tx_ref: i32,
     ) -> Result<i32, WalletError> {
         let rcm = output.note().rcm().to_repr();
-        let account = output.account().0 as i64;
+        let account = output.account().0 as i32; // account is in fact id_fvk
         let diversifier = output.to().diversifier().0.to_vec();
         let value = output.note().value as i64;
         let rcm = rcm.as_ref();
@@ -212,6 +209,9 @@ impl<'a> WalletDbTransaction<'a> {
         let tx = tx_ref;
         let output_index = output.index() as i64;
         let nf_bytes = output.nullifier().map(|nf| nf.0.to_vec());
+        let address = encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, output.to());
+        let row = self.transaction.query_one("SELECT account FROM accounts WHERE address = $1 AND fvk = $2", &[&address, &account])?;
+        let account: i32 = row.get(0);
 
         let sql_args: &[&(dyn ToSql + Sync)] = &[
             &account,
@@ -280,11 +280,13 @@ impl<'a> WalletDbTransaction<'a> {
         memo: Option<&MemoBytes>,
     ) -> Result<i32, WalletError> {
         let to_str = to.encode(&Network::TestNetwork);
+        let row = self.transaction.query_one("SELECT account FROM accounts WHERE address = $1 AND fvk = $2", &[&to_str, &(account.0 as i32)])?;
+        let account: i32 = row.get(0);
         self.transaction
             .query_one(
                 &self.statements.stmt_upsert_sent_note,
                 &[
-                    &account.0,
+                    &account,
                     &to_str,
                     &i64::from(value),
                     &memo.map(|m| m.as_slice().to_vec()),
@@ -365,7 +367,7 @@ impl WalletRead for PostgresWallet {
     ) -> Result<HashMap<AccountId, ExtendedFullViewingKey>, Self::Error> {
         let mut client = self.connection.borrow_mut();
         let mut stmt_fetch_accounts =
-            client.prepare("SELECT account, extfvk FROM accounts ORDER BY account ASC")?;
+            client.prepare("SELECT id_fvk, extfvk FROM fvks ORDER BY id_fvk ASC")?;
 
         let mut rows = client.query(&stmt_fetch_accounts, &[])?;
 
