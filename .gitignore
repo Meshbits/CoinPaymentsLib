@@ -1,7 +1,8 @@
 packages/
 .vs/
 .vscode/
-bin/
+CoinPaymentsLib/bin
+Tests/bin
 obj/
 target/
 .idea/

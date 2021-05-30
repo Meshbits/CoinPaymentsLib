@@ -9,6 +9,7 @@ pub enum WalletError {
     InvalidNote,
     Error(anyhow::Error),
     Postgres(postgres::Error),
+    Tonic(tonic::Status),
 }
 
 impl From<data_api::error::Error<i32>> for WalletError {
@@ -29,3 +30,8 @@ impl From<postgres::Error> for WalletError {
     }
 }
 
+impl From<tonic::Status> for WalletError {
+    fn from(e: tonic::Status) -> Self {
+        WalletError::Tonic(e)
+    }
+}

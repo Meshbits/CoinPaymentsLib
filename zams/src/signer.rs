@@ -111,6 +111,16 @@ mod tests {
     }
 
     #[test]
+    pub fn test_generate_sapling2() {
+        let mut seed = [0u8; 64];
+        let signer = SaplingSigner::new(&seed);
+        let fvk = signer.generate_keys("m/0/0'");
+        assert_eq!(fvk, "zxviewtestsapling1qfkvrtdpqqqqpqqr6g4fx2nwjx9788l0deqqtq9mcfmar4vk3dwtcjwfqaklemn9j4fcskzsl4fsqecxs5wx7n8sna4lcgh4lynd40hw3dv02tyc6l80xfj0wfuzmxwesw8kzvtskg6h8tzzmfxky7gslhpeacn6tl2s2c0zjzp7wak2envsy8tv9txq2tkkfa2y99rfxztza3lhvsswmz4q9p2xe05kh4yg7q3nad5s2vjj763maju3hpkpwwgavk7jpl2y8vqu5jqmglfeq");
+        let (address, _) = signer.generate_address(&fvk, DiversifierIndex::new()).unwrap();
+        assert_eq!(address, "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn");
+    }
+
+    #[test]
     pub fn test_populate_10_addresses() {
         let connection = establish_connection("postgres://hanh@localhost/zamsdb");
         let mut seed = [0u8; 64];

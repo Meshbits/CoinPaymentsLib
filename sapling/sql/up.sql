@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     address TEXT NOT NULL,
     FOREIGN KEY (fvk) REFERENCES fvks(id_fvk)
 );
-CREATE INDEX account_address ON accounts(address);
+CREATE UNIQUE INDEX account_address ON accounts(address);
 CREATE TABLE IF NOT EXISTS blocks (
     height INTEGER PRIMARY KEY,
     hash BYTEA NOT NULL,
@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS received_notes (
     output_index INTEGER NOT NULL,
     account INTEGER NOT NULL,
     diversifier BYTEA NOT NULL,
-    value INTEGER NOT NULL,
+    value BIGINT NOT NULL,
     rcm BYTEA NOT NULL,
     nf BYTEA NOT NULL UNIQUE,
-    is_change INTEGER NOT NULL,
+    is_change BOOL,
     memo BYTEA,
     spent INTEGER,
     FOREIGN KEY (tx) REFERENCES transactions(id_tx),

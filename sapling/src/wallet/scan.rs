@@ -1,44 +1,22 @@
 use crate::grpc::compact_tx_streamer_client::CompactTxStreamerClient;
-use crate::grpc::{BlockId, BlockRange};
-use ff::PrimeField;
-use postgres::fallible_iterator::FallibleIterator;
-use postgres::types::ToSql;
-use postgres::{Client, NoTls, Row, Statement};
+use crate::grpc::{BlockId, BlockRange, ChainSpec};
+
 use prost::bytes::BytesMut;
 use prost::Message as M;
 use protobuf::Message;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::sync::Arc;
+
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use zcash_client_backend::address::RecipientAddress;
+
 use zcash_client_backend::data_api::chain::{scan_cached_blocks, validate_chain};
-use zcash_client_backend::data_api::{
-    BlockSource, PrunedBlock, ReceivedTransaction, SentTransaction, WalletRead, WalletWrite,
-};
-use zcash_client_backend::encoding::{
-    decode_extended_full_viewing_key, decode_payment_address, encode_extended_full_viewing_key,
-    encode_payment_address,
-};
+use zcash_client_backend::data_api::{BlockSource, WalletWrite};
+
 use zcash_client_backend::proto::compact_formats::CompactBlock;
-use zcash_client_backend::wallet::{AccountId, SpendableNote, WalletShieldedOutput, WalletTx};
-use zcash_client_backend::{data_api, DecryptedOutput};
-use zcash_primitives::block::BlockHash;
-use zcash_primitives::consensus::Network::TestNetwork;
-use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
-use zcash_primitives::constants::testnet::{
-    HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
-};
-use zcash_primitives::memo::{Memo, MemoBytes};
-use zcash_primitives::merkle_tree::{CommitmentTree, IncrementalWitness};
-use zcash_primitives::sapling::{Diversifier, Node, Note, Nullifier, PaymentAddress, Rseed};
-use zcash_primitives::transaction::components::Amount;
-use zcash_primitives::transaction::{Transaction, TxId};
-use zcash_primitives::zip32::ExtendedFullViewingKey;
-use crate::wallet::PostgresWallet;
+
+use zcash_primitives::consensus::{BlockHeight, Network};
+
 use crate::error::WalletError;
+use crate::wallet::PostgresWallet;
 
 const LIGHTNODE_URL: &str = "http://localhost:9067";
 
@@ -58,9 +36,16 @@ impl BlockSource for BlockLightwallet {
     {
         let mut r = Runtime::new().unwrap();
         let from_height = u32::from(from_height) + 1;
-        let to_height = from_height.saturating_add(limit.unwrap_or(u32::MAX));
         r.block_on(async {
             let mut client = connect_lightnode().await.unwrap();
+            let latest_block_id = client
+                .get_latest_block(ChainSpec {})
+                .await
+                .unwrap()
+                .into_inner();
+            let to_height = from_height
+                .saturating_add(limit.unwrap_or(u32::MAX))
+                .min(latest_block_id.height as u32);
             let mut blocks = client
                 .get_block_range(tonic::Request::new(BlockRange {
                     start: Some(BlockId {
@@ -76,7 +61,9 @@ impl BlockSource for BlockLightwallet {
                 .unwrap()
                 .into_inner();
             while let Some(cb) = blocks.message().await.unwrap() {
-                println!("{}", cb.height);
+                if cb.height % 1000 == 0 {
+                    println!("{}", cb.height);
+                }
                 let mut cb_bytes = BytesMut::with_capacity(cb.encoded_len());
                 cb.encode_raw(&mut cb_bytes);
                 let block = CompactBlock::parse_from_bytes(&cb_bytes).unwrap();
@@ -106,6 +93,38 @@ pub fn scan() -> anyhow::Result<(), WalletError> {
     scan_cached_blocks(&Network::TestNetwork, &source, &mut data, None)?;
     Ok(())
 }
+
+pub fn load_checkpoint(height: i32) -> Result<(), WalletError> {
+    let mut r = Runtime::new().map_err(WalletError::IO)?;
+    r.block_on(async {
+        let mut client = connect_lightnode().await?;
+        let tree_state = client
+            .get_tree_state(BlockId {
+                height: height as u64,
+                hash: vec![],
+            })
+            .await?
+            .into_inner();
+        let data = PostgresWallet::new()?;
+        data.load_checkpoint(
+            tree_state.height as i32,
+            &hex::decode(tree_state.hash).map_err(|_| anyhow::anyhow!("Not hex"))?,
+            tree_state.time as i32,
+            &hex::decode(tree_state.tree).map_err(|_| anyhow::anyhow!("Not hex"))?,
+        )?;
+        Ok::<(), WalletError>(())
+    })?;
+    Ok(())
+}
+
+pub fn rewind_to_height(height: i32) -> Result<(), WalletError> {
+    let mut data = PostgresWallet::new()?;
+    data.rewind_to_height(BlockHeight::from_u32(height as u32))?;
+
+    Ok(())
+}
+
+// pub fn load_checkpoint(&self, height: i32, hash: &[u8], time: i64, sapling_tree: &[u8]) -> Result<(), WalletError> {
 
 #[cfg(test)]
 mod tests {

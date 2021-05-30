@@ -6,11 +6,11 @@ fn main() {
 mod tests {
     use serde_json::Value;
     use std::fs::File;
+    use zcash_client_backend::wallet::AccountId;
     use zcash_client_backend::welding_rig::scan_block;
     use zcash_primitives::consensus::Network;
     use zcash_primitives::merkle_tree::CommitmentTree;
-    use zcash_primitives::sapling::{SaplingIvk, Nullifier};
-    use zcash_client_backend::wallet::AccountId;
+    use zcash_primitives::sapling::{Nullifier, SaplingIvk};
 
     #[test]
     fn test_load_block_json() {
