@@ -171,7 +171,7 @@ impl NoteAdaptable for DbNoteAdapter {
         use crate::schema::blocks::dsl::blocks;
         use crate::schema::blocks::columns::height;
 
-        let res: Vec<(Note)> = notes
+        let res: Vec<Note> = notes
             .select((id, tx_id, vout_index, value, address, shielded, locked, spent))
             .inner_join(schema::transactions::table.inner_join(schema::blocks::table))
             .filter(address.eq(address2).and(spent.ne(true)))

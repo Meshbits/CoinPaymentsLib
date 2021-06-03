@@ -14,17 +14,25 @@ log = "0.4.14"
 flexi_logger = {version="0.17.1", features = ["compress"]}
 serde = {version = "1.0.126", features = ["derive"]}
 serde_json = "1.0.64"
-tonic = { version = "0.3.1", features = ["tls", "tokio", "tls-roots"] }
-prost = "0.6"
-tokio = { version = "0.2.13", features = ["macros", "blocking"] }
+tonic = { version = "^0.4", features = ["tls", "tokio", "tls-roots"] }
+prost = "0.7"
+tokio = { version = "^1.6", features = ["macros", "rt-multi-thread"] }
 protobuf = "2.23.0"
 postgres = { version = "0.19.1", features = ["with-time-0_2"] }
+reqwest = { version = "0.11.3", features = ["json"] }
 bech32 = "0.8.0"
 jubjub = "0.6"
 ff = "0.9"
 time = "0.2"
 clap = "3.0.0-beta.2"
 hex = "0.4.3"
+rand = "0.8.3"
+bytes = "1.0.1"
+toml = "0.5.8"
+itertools = "0.10.0"
+maplit = "1.0.2"
+futures = "0.3.15"
+secp256k1 = "0.20.2"
 
 [dependencies.zcash_client_backend]
 git = "https://github.com/zcash/librustzcash.git"
@@ -32,6 +40,7 @@ rev = "d50bb12a97da768dc8f3ee39b81f84262103e6eb"
 
 [dependencies.zcash_primitives]
 git = "https://github.com/zcash/librustzcash.git"
+features = [ "transparent-inputs" ]
 rev = "d50bb12a97da768dc8f3ee39b81f84262103e6eb"
 
 [dependencies.zcash_proofs]
@@ -39,4 +48,4 @@ git = "https://github.com/zcash/librustzcash.git"
 rev = "d50bb12a97da768dc8f3ee39b81f84262103e6eb"
 
 [build-dependencies]
-tonic-build = { version = "0.3.1", features = ["prost"] }
+tonic-build = { version = "^0.4", features = ["prost"] }

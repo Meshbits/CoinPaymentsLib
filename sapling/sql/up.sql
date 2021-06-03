@@ -2,9 +2,10 @@ CREATE TABLE IF NOT EXISTS fvks (
     id_fvk INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     extfvk TEXT NOT NULL
 );
+CREATE UNIQUE INDEX fvks_fvk ON fvks(extfvk);
 CREATE TABLE IF NOT EXISTS accounts (
     account INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    fvk INTEGER NOT NULL,
+    fvk INTEGER,
     address TEXT NOT NULL,
     FOREIGN KEY (fvk) REFERENCES fvks(id_fvk)
 );
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS received_notes (
     output_index INTEGER NOT NULL,
     account INTEGER NOT NULL,
     diversifier BYTEA NOT NULL,
+    address TEXT NOT NULL,
     value BIGINT NOT NULL,
     rcm BYTEA NOT NULL,
     nf BYTEA NOT NULL UNIQUE,
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS received_notes (
     FOREIGN KEY (spent) REFERENCES transactions(id_tx),
     CONSTRAINT tx_received_output UNIQUE (tx, output_index)
 );
+CREATE INDEX received_notes_address ON received_notes(address);
 CREATE TABLE IF NOT EXISTS sapling_witnesses (
     id_witness INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     note INTEGER NOT NULL,
@@ -57,9 +60,26 @@ CREATE TABLE IF NOT EXISTS sent_notes (
     output_index INTEGER NOT NULL,
     from_account INTEGER NOT NULL,
     address TEXT NOT NULL,
-    value INTEGER NOT NULL,
+    value BIGINT NOT NULL,
     memo BYTEA,
     FOREIGN KEY (tx) REFERENCES transactions(id_tx),
     FOREIGN KEY (from_account) REFERENCES accounts(account),
     CONSTRAINT tx_send_output UNIQUE (tx, output_index)
 );
+CREATE TABLE IF NOT EXISTS chaintip (
+    id INTEGER NOT NULL PRIMARY KEY,
+    height INTEGER NOT NULL,
+    FOREIGN KEY (height) REFERENCES blocks(height)
+);
+CREATE TABLE IF NOT EXISTS utxos (
+    id_utxo INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    tx_hash BYTEA NOT NULL,
+    address TEXT NOT NULL,
+    output_index INTEGER NOT NULL,
+    value BIGINT NOT NULL,
+    script BYTEA NOT NULL,
+    spent BOOL NOT NULL
+);
+CREATE INDEX utxo_tx ON utxos(tx_hash);
+CREATE UNIQUE INDEX utxo_tx_idx ON utxos(tx_hash, output_index);
+

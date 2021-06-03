@@ -2658,6 +2658,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2 0.9.5",
  "tiny-bip39",
  "tiny-hderive",
  "tokio",

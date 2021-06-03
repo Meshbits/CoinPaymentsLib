@@ -4,7 +4,7 @@ use crate::CONNECTION_STRING;
 use anyhow::anyhow;
 use ff::PrimeField;
 use postgres::types::ToSql;
-use postgres::{Client, NoTls, Row, Statement};
+use postgres::{Client, NoTls, Row, Statement, GenericClient};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -30,13 +30,17 @@ use zcash_primitives::sapling::{Diversifier, Node, Nullifier, PaymentAddress, Rs
 use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{DiversifierIndex, ExtendedFullViewingKey};
+use zcash_primitives::consensus;
+use crate::wallet::transaction::{UTXO, Account};
+use std::ops::DerefMut;
 
 pub mod fvk;
 pub mod scan;
 pub mod shielded_output;
+pub mod transaction;
 
 pub struct PostgresWallet {
-    connection: Arc<RefCell<Client>>,
+    pub connection: Arc<RefCell<Client>>,
     stmt_insert_block: Statement,
 
     stmt_upsert_tx_meta: Statement,
@@ -79,10 +83,11 @@ impl PostgresWallet {
                 "UPDATE received_notes SET spent = $1 WHERE nf = $2"
             )?,
             stmt_upsert_received_note: connection.prepare(
-                "INSERT INTO received_notes (tx, output_index, account, diversifier, value, rcm, memo, nf, is_change)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                "INSERT INTO received_notes (tx, output_index, account, address, diversifier, value, rcm, memo, nf, is_change)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT (tx, output_index) DO UPDATE
                     SET account = excluded.account,
+                        address = excluded.address,
                         diversifier = excluded.diversifier,
                         value = excluded.value,
                         rcm = excluded.rcm,
@@ -118,27 +123,45 @@ impl PostgresWallet {
 
     pub fn load_checkpoint(
         &self,
-        height: i32,
+        height: u32,
         hash: &[u8],
         time: i32,
         sapling_tree: &[u8],
     ) -> Result<(), WalletError> {
-        self.connection.borrow_mut().execute(
+        let mut client = self.connection.borrow_mut();
+        let mut db_tx = client.transaction()?;
+        db_tx.execute(
             "INSERT INTO blocks(height, hash, time, sapling_tree)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (height) DO UPDATE SET
             hash = excluded.hash,
             time = excluded.time,
             sapling_tree = excluded.sapling_tree",
-            &[&height, &hash, &time, &sapling_tree],
+            &[&(height as i32), &hash, &time, &sapling_tree],
         )?;
+        update_chain_tip(&mut db_tx, height)?;
+        db_tx.commit()?;
         Ok(())
     }
 
     pub fn import_fvk(&self, fvk: &str) -> Result<i32, WalletError> {
         let row = self.connection.borrow_mut().query_one(
-            "INSERT INTO fvks(extfvk) VALUES ($1) RETURNING id_fvk",
+            "INSERT INTO fvks(extfvk) VALUES ($1)
+            ON CONFLICT (extfvk) DO UPDATE SET
+            extfvk = excluded.extfvk
+            RETURNING id_fvk",
             &[&fvk],
+        )?;
+        Ok(row.get(0))
+    }
+
+    pub fn import_address(&self, address: &str) -> Result<i32, WalletError> {
+        let row = self.connection.borrow_mut().query_one(
+            "INSERT INTO accounts(fvk, address) VALUES (NULL, $1)
+            ON CONFLICT (address) DO UPDATE SET
+            address = excluded.address
+            RETURNING account",
+            &[&address],
         )?;
         Ok(row.get(0))
     }
@@ -176,10 +199,89 @@ impl PostgresWallet {
             &[&id_fvk, &address],
         )?;
         let account: i32 = row.get(0);
-        println!("account: {}", account);
 
         Ok((address, diversifier_index_out))
     }
+
+    pub fn get_spendable_notes_by_address(
+        &self,
+        address: &str,
+        anchor_height: BlockHeight,
+    ) -> Result<Vec<SpendableNote>, WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let stmt_select_notes = client.prepare(
+            "SELECT diversifier, value, rcm, witness
+            FROM received_notes
+            INNER JOIN transactions ON transactions.id_tx = received_notes.tx
+            INNER JOIN sapling_witnesses ON sapling_witnesses.note = received_notes.id_note
+            WHERE address = $1
+            AND spent IS NULL
+            AND transactions.block <= $2
+            AND sapling_witnesses.block = $2",
+        )?;
+
+        // Select notes
+        let notes = client.query(
+            &stmt_select_notes,
+            &[&address, &(u32::from(anchor_height) as i32)],
+        )?;
+        let notes: Vec<_> = notes.iter().map(to_spendable_note).collect();
+        notes.into_iter().collect()
+    }
+
+    pub fn get_spendable_transparent_notes_by_address(&self, address: &str) -> Result<Vec<UTXO>, WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let rows = client.query("SELECT tx_hash, output_index, value, script FROM utxos WHERE address = $1 AND not spent", &[&address]).map_err(WalletError::Postgres)?;
+        let notes: Vec<_> = rows.iter().map(|row| {
+            let tx_hash: Vec<u8> = row.get(0);
+            let output_index: i32 = row.get(1);
+            let value: i64 = row.get(2);
+            let script_hex: Vec<u8> = row.get(3);
+            UTXO {
+                amount: value as u64,
+                tx_hash: hex::encode(&tx_hash),
+                output_index,
+                hex: hex::encode(&script_hex),
+                spent: false
+            }
+        }).collect();
+        Ok(notes)
+    }
+
+    pub fn get_chain_tip(&self) -> Result<Option<i32>, WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let row = client.query_opt("SELECT height FROM chaintip WHERE id = 0", &[]).map_err(WalletError::Postgres)?;
+
+        let height = row.map(|row| row.get::<_, i32>(0));
+        Ok(height)
+    }
+
+    pub fn get_account(&self, id: i32) -> Result<Account, WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let row = client.query_one("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
+        let address: String = row.get(0);
+        let fvk: Option<String> = row.get(1);
+        Ok(match fvk {
+            Some(fvk) => Account::Shielded(address, fvk),
+            None => Account::Transparent(address),
+        })
+    }
+
+    pub fn get_all_trp_addresses(&self) -> Result<Vec<(i32, String)>, WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let row = client.query("SELECT account, address FROM accounts WHERE fvk IS NULL", &[]).map_err(WalletError::Postgres)?;
+        Ok(row.iter().map(|row| {
+            let id: i32 = row.get(0);
+            let address: String = row.get(1);
+            (id, address)
+        }).collect())
+    }
+}
+
+pub fn update_chain_tip<C: GenericClient>(client: &mut C, height: u32) -> Result<(), WalletError> {
+    client.execute("INSERT INTO chaintip(id, height) VALUES(0, $1)
+        ON CONFLICT (id) DO UPDATE SET height = excluded.height", &[&(height as i32)]).map_err(WalletError::Postgres)?;
+    Ok(())
 }
 
 struct WalletDbTransaction<'a> {
@@ -292,6 +394,7 @@ impl<'a> WalletDbTransaction<'a> {
             &tx,
             &output_index,
             &account,
+            &address,
             &diversifier,
             &value,
             &rcm,
@@ -574,71 +677,20 @@ impl WalletRead for PostgresWallet {
 
     fn get_spendable_notes(
         &self,
-        account: AccountId,
-        anchor_height: BlockHeight,
+        _account: AccountId,
+        _anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        let mut client = self.connection.borrow_mut();
-        let stmt_select_notes = client.prepare(
-            "SELECT diversifier, value, rcm, witness
-            FROM received_notes
-            INNER JOIN transactions ON transactions.id_tx = received_notes.tx
-            INNER JOIN sapling_witnesses ON sapling_witnesses.note = received_notes.id_note
-            WHERE account = :account
-            AND spent IS NULL
-            AND transactions.block <= $1
-            AND sapling_witnesses.block = $2",
-        )?;
-
-        // Select notes
-        let notes = client.query(
-            &stmt_select_notes,
-            &[&i64::from(account.0), &(u32::from(anchor_height) as i32)],
-        )?;
-        let notes: Vec<_> = notes.iter().map(to_spendable_note).collect();
-        notes.into_iter().collect()
+        unimplemented!();
     }
 
     fn select_spendable_notes(
         &self,
-        account: AccountId,
-        target_value: Amount,
-        anchor_height: BlockHeight,
+        _account: AccountId,
+        _target_value: Amount,
+        _anchor_height: BlockHeight,
     ) -> Result<Vec<SpendableNote>, Self::Error> {
-        let mut client = self.connection.borrow_mut();
-        let stmt_select_notes = client.prepare(
-            "WITH selected AS (
-            WITH eligible AS (
-                SELECT id_note, diversifier, value, rcm,
-                    SUM(value) OVER
-                        (PARTITION BY account, spent ORDER BY id_note) AS so_far
-                FROM received_notes
-                INNER JOIN transactions ON transactions.id_tx = received_notes.tx
-                WHERE account = $1 AND spent IS NULL AND transactions.block <= $2
-            )
-            SELECT * FROM eligible WHERE so_far < $3
-            UNION
-            SELECT * FROM (SELECT * FROM eligible WHERE so_far >= $3 LIMIT 1)
-        ), witnesses AS (
-            SELECT note, witness FROM sapling_witnesses
-            WHERE block = $2
-        )
-        SELECT selected.diversifier, selected.value, selected.rcm, witnesses.witness
-        FROM selected
-        INNER JOIN witnesses ON selected.id_note = witnesses.note",
-        )?;
-
-        // Select notes
-        let notes = client.query(
-            &stmt_select_notes,
-            &[
-                &i64::from(account.0),
-                &u32::from(anchor_height),
-                &i64::from(target_value),
-            ],
-        )?;
-        let notes: Vec<_> = notes.iter().map(to_spendable_note).collect();
-
-        notes.into_iter().collect()
+        // unused
+        unimplemented!();
     }
 }
 
@@ -690,6 +742,8 @@ impl WalletWrite for PostgresWallet {
 
         // Update now-expired transactions that didn't get mined.
         db_tx.update_expired_notes(block.block_height)?;
+
+        update_chain_tip(&mut db_tx.transaction, u32::from(block.block_height))?;
 
         db_tx.transaction.commit()?;
         Ok(new_witnesses)

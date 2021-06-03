@@ -1,4 +1,5 @@
 use zcash_client_backend::data_api;
+use anyhow::anyhow;
 
 #[derive(Debug)]
 pub enum WalletError {
@@ -10,6 +11,7 @@ pub enum WalletError {
     Error(anyhow::Error),
     Postgres(postgres::Error),
     Tonic(tonic::Status),
+    TxBuilder(zcash_primitives::transaction::builder::Error),
 }
 
 impl From<data_api::error::Error<i32>> for WalletError {
@@ -33,5 +35,17 @@ impl From<postgres::Error> for WalletError {
 impl From<tonic::Status> for WalletError {
     fn from(e: tonic::Status) -> Self {
         WalletError::Tonic(e)
+    }
+}
+
+impl From<hex::FromHexError> for WalletError {
+    fn from(_: hex::FromHexError) -> Self {
+        WalletError::Error(anyhow!("Could not decode hex string"))
+    }
+}
+
+impl From<zcash_primitives::transaction::builder::Error> for WalletError {
+    fn from(e: zcash_primitives::transaction::builder::Error) -> Self {
+        WalletError::TxBuilder(e)
     }
 }
