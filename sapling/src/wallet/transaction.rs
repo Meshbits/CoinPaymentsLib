@@ -34,6 +34,10 @@ use zcash_primitives::legacy::Script;
 use zcash_primitives::sapling::keys::OutgoingViewingKey;
 use zcash_proofs::prover::LocalTxProver;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
+use crate::db;
+use postgres::GenericClient;
+use crate::db::DbPreparedStatements;
+use std::ops::DerefMut;
 
 #[derive(Debug, Clone)]
 pub enum Account {
@@ -150,20 +154,21 @@ fn select_notes<TxIn, N: NoteLike<TxIn>, R: RngCore>(
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub fn prepare_tx<R: RngCore>(
+pub fn prepare_tx<C: GenericClient, R: RngCore>(
     from_account: i32,
     to_address: &str,
     change_account: i32,
     amount: i64,
+    c: &mut C,
+    statements: &DbPreparedStatements,
     rng: &mut R,
 ) -> Result<UnsignedTx, WalletError> {
     let amount = Amount::from_i64(amount).map_err(|_| anyhow!("Cannot convert amount"))?;
     let target_value = amount + DEFAULT_FEE;
 
-    let wallet = PostgresWallet::new()?;
-    let (height, anchor_height) = wallet.get_target_and_anchor_heights()?.unwrap();
+    let (height, anchor_height) = db::get_target_and_anchor_heights(c)?.unwrap();
 
-    let (change_address, change_fvk) = match wallet.get_account(change_account)? {
+    let (change_address, change_fvk) = match db::get_account(c, change_account)? {
         Account::Transparent(_) => {
             return Err(WalletError::Error(anyhow!(
                 "Change account must be shielded"
@@ -171,7 +176,6 @@ pub fn prepare_tx<R: RngCore>(
         }
         Account::Shielded(change_address, change_fvk) => (change_address, change_fvk),
     };
-    let wallet = PostgresWallet::new()?;
 
     let mut tx = UnsignedTx {
         height: i64::from(height),
@@ -185,7 +189,7 @@ pub fn prepare_tx<R: RngCore>(
 
     let mut ovk: Option<OutgoingViewingKey> = None;
 
-    match wallet.get_account(from_account)? {
+    match db::get_account(c, from_account)? {
         Account::Shielded(from_address, extfvk) => {
             tx.fvk = extfvk.clone();
             let extfvk =
@@ -194,13 +198,13 @@ pub fn prepare_tx<R: RngCore>(
                     .unwrap();
             ovk = Some(extfvk.fvk.ovk);
             let mut spendable_notes =
-                wallet.get_spendable_notes_by_address(&from_address, anchor_height)?;
+                db::get_spendable_notes_by_address(c,statements, &from_address, u32::from(anchor_height))?;
             let mut tx_ins = select_notes(&from_address, &mut spendable_notes, target_value, rng)?;
             tx.sap_inputs.append(&mut tx_ins);
         }
         Account::Transparent(from_address) => {
             let mut spendable_notes =
-                wallet.get_spendable_transparent_notes_by_address(&from_address)?;
+                db::get_spendable_transparent_notes_by_address(c, statements, &from_address)?;
             let mut tx_ins = select_notes(&from_address, &mut spendable_notes, target_value, rng)?;
             tx.trp_inputs.append(&mut tx_ins);
         }
@@ -329,14 +333,28 @@ pub fn broadcast_tx(tx: &Bytes) -> Result<String, WalletError> {
 mod tests {
     use super::*;
     use rand::thread_rng;
+    use postgres::{Client, NoTls};
+    use crate::CONNECTION_STRING;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn setup() -> DbPreparedStatements {
+        let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let c = Rc::new(RefCell::new(connection));
+        let statements = DbPreparedStatements::prepare(c).unwrap();
+        statements
+    }
 
     #[test]
     fn test_prepare_shielded_tx() {
         let mut rng = thread_rng();
+        let statements = setup();
+        let mut c = statements.client.clone();
         let tx = prepare_tx(1,
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             20_000_000,
+                            c.borrow_mut().deref_mut(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }
@@ -344,10 +362,13 @@ mod tests {
     #[test]
     fn test_prepare_transparent_tx() {
         let mut rng = thread_rng();
+        let statements = setup();
+        let mut c = statements.client.clone();
         let tx = prepare_tx(2,
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             500_000,
+                            c.borrow_mut().deref_mut(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }

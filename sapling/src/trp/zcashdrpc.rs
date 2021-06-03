@@ -1,9 +1,14 @@
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use anyhow::bail;
 use std::fs;
 use std::path::Path;
+use crate::CONNECTION_STRING;
+use postgres::NoTls;
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::db::DbPreparedStatements;
+use reqwest::Client;
 
 #[derive(Debug, Clone)]
 pub struct ZcashdConf {
@@ -64,6 +69,7 @@ impl ZcashdConf {
         let table = conf.as_table().unwrap();
         let rpc_username = table.get("rpcuser").unwrap().as_str().unwrap();
         let rpc_password = table.get("rpcpassword").unwrap().as_str().unwrap();
+
         Ok(ZcashdConf {
             url: url.to_owned(),
             rpc_username: rpc_username.to_owned(),
@@ -81,7 +87,7 @@ struct JsonRpcBody<'a> {
 }
 
 pub async fn make_json_rpc(
-    client: &Client,
+    client: &reqwest::Client,
     method: &str,
     params: Value,
     config: &ZcashdConf,

@@ -33,14 +33,14 @@ use zcash_primitives::zip32::{DiversifierIndex, ExtendedFullViewingKey};
 use zcash_primitives::consensus;
 use crate::wallet::transaction::{UTXO, Account};
 use std::ops::DerefMut;
+use std::rc::Rc;
 
-pub mod fvk;
 pub mod scan;
 pub mod shielded_output;
 pub mod transaction;
 
 pub struct PostgresWallet {
-    pub connection: Arc<RefCell<Client>>,
+    pub connection: Rc<RefCell<Client>>,
     stmt_insert_block: Statement,
 
     stmt_upsert_tx_meta: Statement,
@@ -59,7 +59,7 @@ pub struct PostgresWallet {
 impl PostgresWallet {
     pub fn new() -> Result<PostgresWallet, WalletError> {
         let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
-        let c = Arc::new(RefCell::new(connection));
+        let c = Rc::new(RefCell::new(connection));
         let mut connection = c.borrow_mut();
         Ok(PostgresWallet {
             connection: c.clone(),
@@ -119,153 +119,6 @@ impl PostgresWallet {
                     )",
             )?,
         })
-    }
-
-    pub fn load_checkpoint(
-        &self,
-        height: u32,
-        hash: &[u8],
-        time: i32,
-        sapling_tree: &[u8],
-    ) -> Result<(), WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let mut db_tx = client.transaction()?;
-        db_tx.execute(
-            "INSERT INTO blocks(height, hash, time, sapling_tree)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (height) DO UPDATE SET
-            hash = excluded.hash,
-            time = excluded.time,
-            sapling_tree = excluded.sapling_tree",
-            &[&(height as i32), &hash, &time, &sapling_tree],
-        )?;
-        db_tx.commit()?;
-        Ok(())
-    }
-
-    pub fn import_fvk(&self, fvk: &str) -> Result<i32, WalletError> {
-        let row = self.connection.borrow_mut().query_one(
-            "INSERT INTO fvks(extfvk) VALUES ($1)
-            ON CONFLICT (extfvk) DO UPDATE SET
-            extfvk = excluded.extfvk
-            RETURNING id_fvk",
-            &[&fvk],
-        )?;
-        Ok(row.get(0))
-    }
-
-    pub fn import_address(&self, address: &str) -> Result<i32, WalletError> {
-        let row = self.connection.borrow_mut().query_one(
-            "INSERT INTO accounts(fvk, address) VALUES (NULL, $1)
-            ON CONFLICT (address) DO UPDATE SET
-            address = excluded.address
-            RETURNING account",
-            &[&address],
-        )?;
-        Ok(row.get(0))
-    }
-
-    pub fn generate_keys(
-        &self,
-        id_fvk: i32,
-        diversifier_index: u128,
-    ) -> std::result::Result<(String, u128), WalletError> {
-        let row = self
-            .connection
-            .borrow_mut()
-            .query_one("SELECT extfvk FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
-        let key: String = row.get(0);
-        let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &key)
-            .map_err(WalletError::Bech32)?
-            .ok_or(WalletError::IncorrectHrpExtFvk)?;
-        let mut di = DiversifierIndex::new();
-        di.0.copy_from_slice(&u128::to_le_bytes(diversifier_index)[..11]);
-        di.increment()
-            .map_err(|_| anyhow::anyhow!("Out of diversifier indexes"))?;
-        let (di, pa) = fvk
-            .address(di)
-            .map_err(|_| anyhow!("Invalid diversifier"))?;
-        let address = encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &pa);
-        let mut di_bytes = [0u8; 16];
-        di_bytes[..11].copy_from_slice(&di.0);
-        let diversifier_index_out = u128::from_le_bytes(di_bytes);
-
-        let row = self.connection.borrow_mut().query_one(
-            "INSERT INTO accounts(fvk, address)
-            VALUES ($1, $2)
-            ON CONFLICT (address) DO UPDATE SET
-            fvk = excluded.fvk RETURNING account",
-            &[&id_fvk, &address],
-        )?;
-        let account: i32 = row.get(0);
-
-        Ok((address, diversifier_index_out))
-    }
-
-    pub fn get_spendable_notes_by_address(
-        &self,
-        address: &str,
-        anchor_height: BlockHeight,
-    ) -> Result<Vec<SpendableNote>, WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let stmt_select_notes = client.prepare(
-            "SELECT diversifier, value, rcm, witness
-            FROM received_notes
-            INNER JOIN transactions ON transactions.id_tx = received_notes.tx
-            INNER JOIN sapling_witnesses ON sapling_witnesses.note = received_notes.id_note
-            WHERE address = $1
-            AND spent IS NULL
-            AND transactions.block <= $2
-            AND sapling_witnesses.block = $2",
-        )?;
-
-        // Select notes
-        let notes = client.query(
-            &stmt_select_notes,
-            &[&address, &(u32::from(anchor_height) as i32)],
-        )?;
-        let notes: Vec<_> = notes.iter().map(to_spendable_note).collect();
-        notes.into_iter().collect()
-    }
-
-    pub fn get_spendable_transparent_notes_by_address(&self, address: &str) -> Result<Vec<UTXO>, WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let rows = client.query("SELECT tx_hash, output_index, value, script FROM utxos WHERE address = $1 AND not spent", &[&address]).map_err(WalletError::Postgres)?;
-        let notes: Vec<_> = rows.iter().map(|row| {
-            let tx_hash: Vec<u8> = row.get(0);
-            let output_index: i32 = row.get(1);
-            let value: i64 = row.get(2);
-            let script_hex: Vec<u8> = row.get(3);
-            UTXO {
-                amount: value as u64,
-                tx_hash: hex::encode(&tx_hash),
-                output_index,
-                hex: hex::encode(&script_hex),
-                spent: false
-            }
-        }).collect();
-        Ok(notes)
-    }
-
-    pub fn get_account(&self, id: i32) -> Result<Account, WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let row = client.query_one("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
-        let address: String = row.get(0);
-        let fvk: Option<String> = row.get(1);
-        Ok(match fvk {
-            Some(fvk) => Account::Shielded(address, fvk),
-            None => Account::Transparent(address),
-        })
-    }
-
-    pub fn get_all_trp_addresses(&self) -> Result<Vec<(i32, String)>, WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let row = client.query("SELECT account, address FROM accounts WHERE fvk IS NULL", &[]).map_err(WalletError::Postgres)?;
-        Ok(row.iter().map(|row| {
-            let id: i32 = row.get(0);
-            let address: String = row.get(1);
-            (id, address)
-        }).collect())
     }
 }
 
@@ -476,21 +329,7 @@ impl WalletRead for PostgresWallet {
     type TxRef = i32;
 
     fn block_height_extrema(&self) -> Result<Option<(BlockHeight, BlockHeight)>, Self::Error> {
-        let row = self
-            .connection
-            .borrow_mut()
-            .query_one("SELECT MIN(height), MAX(height) FROM blocks", &[])?;
-
-        let min_height: Option<i32> = row.get(0);
-        let max_height: Option<i32> = row.get(1);
-        let r = match (min_height, max_height) {
-            (Some(min_height), Some(max_height)) => Some((
-                BlockHeight::from(min_height as u32),
-                BlockHeight::from(max_height as u32),
-            )),
-            _ => None,
-        };
-        Ok(r)
+        crate::db::block_height_extrema(self.connection.borrow_mut().deref_mut())
     }
 
     fn get_block_hash(&self, block_height: BlockHeight) -> Result<Option<BlockHash>, Self::Error> {
@@ -840,7 +679,7 @@ impl WalletWrite for PostgresWallet {
     }
 }
 
-fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
+pub fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
     let diversifier = {
         let d: Vec<_> = row.get(0);
         if d.len() != 11 {

@@ -19,8 +19,12 @@ use crate::error::WalletError;
 use crate::wallet::PostgresWallet;
 use futures::StreamExt;
 use std::ops::{RangeInclusive, Range};
-use crate::trp::{scan_transparent, TrpWallet};
-use crate::ZcashdConf;
+use crate::trp::{TrpWallet};
+use crate::{ZcashdConf, db};
+use postgres::Client;
+use crate::db::DbPreparedStatements;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 const LIGHTNODE_URL: &str = "http://localhost:9067";
 const MAX_CHUNK: u32 = 1000;
@@ -49,7 +53,7 @@ impl BlockSource for BlockLightwallet {
                 .unwrap()
                 .into_inner();
             from_height
-                .saturating_add(limit.unwrap_or(u32::MAX))
+                .saturating_add(limit.unwrap_or(u32::MAX) - 1)
                 .min(latest_block_id.height as u32)
         });
 
@@ -128,19 +132,20 @@ pub fn scan_sapling() -> anyhow::Result<(), WalletError> {
     Ok(())
 }
 
-pub fn scan_chain(config: &ZcashdConf) -> anyhow::Result<(), WalletError> {
+pub fn scan_chain(c: Rc<RefCell<Client>>, config: &ZcashdConf) -> anyhow::Result<(), WalletError> {
+    let mut trp_wallet = TrpWallet::new(c)?;
     loop {
         let range = get_scan_range()?;
         println!("{:?}", range);
         let len = range.end - range.start;
         if len == 0 { break }
         scan_sapling()?;
-        scan_transparent(range, &config)?;
+        trp_wallet.scan_transparent(range, config)?;
     }
     Ok(())
 }
 
-pub fn load_checkpoint(height: u32) -> Result<(), WalletError> {
+pub fn load_checkpoint(client: &mut Client, height: u32) -> Result<(), WalletError> {
     let r = Runtime::new().unwrap();
     let tree_state = r.block_on(async {
         let mut client = connect_lightnode().await?;
@@ -154,7 +159,8 @@ pub fn load_checkpoint(height: u32) -> Result<(), WalletError> {
     })?;
     let data = PostgresWallet::new()?;
 
-    data.load_checkpoint(
+    db::load_checkpoint(
+        client,
         tree_state.height as u32,
         &hex::decode(tree_state.hash).map_err(|_| anyhow::anyhow!("Not hex"))?,
         tree_state.time as i32,
@@ -166,31 +172,7 @@ pub fn load_checkpoint(height: u32) -> Result<(), WalletError> {
 pub fn rewind_to_height(height: u32) -> Result<(), WalletError> {
     let mut data = PostgresWallet::new()?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
-    let trp_wallet = TrpWallet::new(data.connection);
+    let trp_wallet = TrpWallet::new(data.connection.clone())?;
     trp_wallet.rewind_to_height(height)?;
-    // TODO: Update chain tip
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testconfig::{TEST_ZCASHD_URL, TEST_DATADIR};
-
-    #[test]
-    fn test_validate() {
-        validate().unwrap();
-    }
-
-    #[test]
-    fn test_scan() {
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
-        scan_chain(&config).unwrap();
-    }
-
-    #[test]
-    fn test_scan_range() {
-        let r = get_scan_range().unwrap();
-        println!("{:?}", r);
-    }
 }
