@@ -6,11 +6,12 @@ use maplit::hashmap;
 use postgres::{Client, Statement};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::RangeInclusive;
+use std::ops::{RangeInclusive, Range};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 pub mod zcashdrpc;
+pub mod db;
 
 pub struct BlockSource {
     config: ZcashdConf,
@@ -25,7 +26,7 @@ impl BlockSource {
 
     pub fn with_blocks<F>(
         &self,
-        range: RangeInclusive<i32>,
+        range: Range<u32>,
         mut with_block: F,
     ) -> Result<(), WalletError>
     where
@@ -55,14 +56,13 @@ impl TrpWallet {
             addresses: HashMap::new(),
             upsert_spent_utxo: client
                 .prepare(
-                    "INSERT INTO utxos(tx_hash, address, output_index, value, script, spent)
-            VALUES($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (tx_hash, output_index) DO UPDATE SET
-            address = excluded.address,
-            value = excluded.value,
-            script = coalesce(utxos.script, excluded.script),
-            spent = excluded.spent",
-                )
+                    "INSERT INTO utxos(tx_hash, address, output_index, value, script,
+                    height, spent, spent_height)
+                    VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (tx_hash, output_index) DO UPDATE SET
+                    spent = excluded.spent,
+                    spent_height = excluded.spent_height",
+                    )
                 .unwrap(),
         }
     }
@@ -81,7 +81,9 @@ impl TrpWallet {
                             &(input.vout.unwrap() as i32),
                             &(input.valueSat.unwrap() as i64),
                             &script,
+                            &0,
                             &true,
+                            &(tx.height.unwrap() as i32)
                         ],
                     )?;
                 }
@@ -103,7 +105,9 @@ impl TrpWallet {
                             &(index as i32),
                             &(output.valueSat as i64),
                             &Some(hex::decode(&output.scriptPubKey.hex).unwrap()),
+                            &(tx.height.unwrap() as i32),
                             &false,
+                            &Option::<i32>::None
                         ],
                     )?;
                 }
@@ -121,7 +125,7 @@ impl TrpWallet {
         Ok(())
     }
 
-    pub fn scan_range(&mut self, range: RangeInclusive<i32>, config: &ZcashdConf) -> Result<(), WalletError> {
+    pub fn scan_range(&mut self, range: Range<u32>, config: &ZcashdConf) -> Result<(), WalletError> {
         let source = BlockSource::new(&config);
         let mut client = self.connection.borrow_mut();
         source
@@ -133,9 +137,17 @@ impl TrpWallet {
                 Ok(())
             })
     }
+
+    pub fn rewind_to_height(&self, height: u32) -> Result<(), WalletError> {
+        let mut client = self.connection.borrow_mut();
+        let mut db_tx = client.transaction()?;
+        db::trp_rewind_to_height(&mut db_tx, height)?;
+        db_tx.commit()?;
+        Ok(())
+    }
 }
 
-pub fn scan_transparent(range: RangeInclusive<i32>, config: &ZcashdConf) -> Result<(), WalletError> {
+pub fn scan_transparent(range: Range<u32>, config: &ZcashdConf) -> Result<(), WalletError> {
     let sapling_wallet = PostgresWallet::new()?;
     let mut wallet = TrpWallet::new(sapling_wallet.connection);
     wallet.load_transparent_addresses_from_db()?;
@@ -155,6 +167,6 @@ mod tests {
         let sapling_wallet = PostgresWallet::new().unwrap();
         let mut wallet = TrpWallet::new(sapling_wallet.connection);
         wallet.load_transparent_addresses_from_db().unwrap();
-        wallet.scan_range(1_432_000..=1_432_138, &config).unwrap();
+        wallet.scan_range(1_432_000..1_432_138, &config).unwrap();
     }
 }

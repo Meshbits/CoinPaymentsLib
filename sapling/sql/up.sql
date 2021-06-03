@@ -66,11 +66,11 @@ CREATE TABLE IF NOT EXISTS sent_notes (
     FOREIGN KEY (from_account) REFERENCES accounts(account),
     CONSTRAINT tx_send_output UNIQUE (tx, output_index)
 );
-CREATE TABLE IF NOT EXISTS chaintip (
-    id INTEGER NOT NULL PRIMARY KEY,
-    height INTEGER NOT NULL,
-    FOREIGN KEY (height) REFERENCES blocks(height)
-);
+-- CREATE TABLE IF NOT EXISTS chaintip (
+--     id INTEGER NOT NULL PRIMARY KEY,
+--     height INTEGER NOT NULL,
+--     FOREIGN KEY (height) REFERENCES blocks(height)
+-- );
 CREATE TABLE IF NOT EXISTS utxos (
     id_utxo INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     tx_hash BYTEA NOT NULL,
@@ -78,7 +78,9 @@ CREATE TABLE IF NOT EXISTS utxos (
     output_index INTEGER NOT NULL,
     value BIGINT NOT NULL,
     script BYTEA NOT NULL,
-    spent BOOL NOT NULL
+    height INTEGER NOT NULL,
+    spent BOOL NOT NULL,
+    spent_height INTEGER
 );
 CREATE INDEX utxo_tx ON utxos(tx_hash);
 CREATE UNIQUE INDEX utxo_tx_idx ON utxos(tx_hash, output_index);

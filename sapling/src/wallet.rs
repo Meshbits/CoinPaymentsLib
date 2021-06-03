@@ -139,7 +139,6 @@ impl PostgresWallet {
             sapling_tree = excluded.sapling_tree",
             &[&(height as i32), &hash, &time, &sapling_tree],
         )?;
-        update_chain_tip(&mut db_tx, height)?;
         db_tx.commit()?;
         Ok(())
     }
@@ -248,14 +247,6 @@ impl PostgresWallet {
         Ok(notes)
     }
 
-    pub fn get_chain_tip(&self) -> Result<Option<i32>, WalletError> {
-        let mut client = self.connection.borrow_mut();
-        let row = client.query_opt("SELECT height FROM chaintip WHERE id = 0", &[]).map_err(WalletError::Postgres)?;
-
-        let height = row.map(|row| row.get::<_, i32>(0));
-        Ok(height)
-    }
-
     pub fn get_account(&self, id: i32) -> Result<Account, WalletError> {
         let mut client = self.connection.borrow_mut();
         let row = client.query_one("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
@@ -276,12 +267,6 @@ impl PostgresWallet {
             (id, address)
         }).collect())
     }
-}
-
-pub fn update_chain_tip<C: GenericClient>(client: &mut C, height: u32) -> Result<(), WalletError> {
-    client.execute("INSERT INTO chaintip(id, height) VALUES(0, $1)
-        ON CONFLICT (id) DO UPDATE SET height = excluded.height", &[&(height as i32)]).map_err(WalletError::Postgres)?;
-    Ok(())
 }
 
 struct WalletDbTransaction<'a> {
@@ -742,8 +727,6 @@ impl WalletWrite for PostgresWallet {
 
         // Update now-expired transactions that didn't get mined.
         db_tx.update_expired_notes(block.block_height)?;
-
-        update_chain_tip(&mut db_tx.transaction, u32::from(block.block_height))?;
 
         db_tx.transaction.commit()?;
         Ok(new_witnesses)

@@ -1,5 +1,5 @@
 DROP TABLE IF EXISTS utxos;
-DROP TABLE IF EXISTS chaintip;
+-- DROP TABLE IF EXISTS chaintip;
 DROP TABLE IF EXISTS sapling_witnesses;
 DROP TABLE IF EXISTS sent_notes;
 DROP TABLE IF EXISTS received_notes;

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use clap::Clap;
 use rand::thread_rng;
-use sapling::{broadcast_tx, generate_keys, import_address, import_fvk, load_checkpoint, prepare_tx, rewind_to_height, scan, sign_tx, ZcashdConf};
+use sapling::{broadcast_tx, generate_keys, import_address, import_fvk, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, ZcashdConf};
 
 #[derive(Clap)]
 struct CommandArgs {
@@ -12,10 +12,10 @@ struct CommandArgs {
 #[derive(Clap)]
 enum Command {
     LoadCheckpoint {
-        height: i32,
+        height: u32,
     },
     Rewind {
-        height: i32,
+        height: u32,
     },
     Scan,
     ImportFVK {
@@ -56,7 +56,7 @@ fn main() {
             rewind_to_height(height).unwrap();
         }
         Command::Scan => {
-            scan(&config).unwrap();
+            scan_chain(&config).unwrap();
         }
         Command::ImportFVK { fvk } => {
             let id_fvk = import_fvk(&fvk).unwrap();
