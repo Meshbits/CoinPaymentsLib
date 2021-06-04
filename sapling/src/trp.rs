@@ -10,10 +10,9 @@ use std::ops::{RangeInclusive, Range, DerefMut};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use std::rc::Rc;
-use crate::db::DbPreparedStatements;
+use crate::db::{DbPreparedStatements, trp_rewind_to_height};
 
 pub mod zcashdrpc;
-pub mod db;
 
 pub struct BlockSource {
     config: ZcashdConf,
@@ -45,14 +44,16 @@ impl BlockSource {
 }
 
 pub struct TrpWallet {
+    client: Rc<RefCell<Client>>,
     statements: DbPreparedStatements,
     addresses: HashMap<String, i32>,
 }
 
 impl TrpWallet {
     pub fn new(c: Rc<RefCell<Client>>) -> crate::Result<TrpWallet> {
-        let statements = DbPreparedStatements::prepare(c)?;
+        let statements = DbPreparedStatements::prepare(c.clone())?;
         Ok(TrpWallet {
+            client: c.clone(),
             statements,
             addresses: HashMap::new(),
         })
@@ -108,7 +109,7 @@ impl TrpWallet {
     }
 
     pub fn load_transparent_addresses_from_db(&mut self) -> Result<(), WalletError> {
-        let mut c = self.statements.client.borrow_mut();
+        let mut c = self.client.borrow_mut();
         let addresses = crate::db::get_all_trp_addresses(c.deref_mut())?;
         self
         .addresses
@@ -117,7 +118,7 @@ impl TrpWallet {
     }
 
     pub fn scan_range(&mut self, range: Range<u32>, config: &ZcashdConf) -> Result<(), WalletError> {
-        let mut c = self.statements.client.borrow_mut();
+        let mut c = self.client.borrow_mut();
         let source = BlockSource::new(&config);
         source
             .with_blocks(range, |block| {
@@ -130,9 +131,9 @@ impl TrpWallet {
     }
 
     pub fn rewind_to_height(&self, height: u32) -> Result<(), WalletError> {
-        let mut c = self.statements.client.borrow_mut();
+        let mut c = self.client.borrow_mut();
         let mut db_tx = c.transaction()?;
-        db::trp_rewind_to_height(&mut db_tx, height)?;
+        trp_rewind_to_height(&mut db_tx, height)?;
         db_tx.commit()?;
         Ok(())
     }

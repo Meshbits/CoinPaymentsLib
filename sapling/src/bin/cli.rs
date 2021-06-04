@@ -6,8 +6,9 @@ use sapling::error::WalletError::Postgres;
 use postgres::{NoTls, Client};
 use std::cell::RefCell;
 use std::rc::Rc;
-use sapling::db::{self, DbPreparedStatements, import_address, generate_keys};
+use sapling::db::{self, DbPreparedStatements, import_address, generate_keys, cancel_payment};
 use std::ops::DerefMut;
+use std::time::SystemTime;
 
 #[derive(Clap)]
 struct CommandArgs {
@@ -39,6 +40,9 @@ enum Command {
         to_address: String,
         change_account: i32,
         amount: i64,
+    },
+    CancelTx {
+        id: i32,
     },
     SignTx {
         sk: String,
@@ -90,17 +94,23 @@ fn main() {
         Command::PrepareTx { from_account, to_address, change_account, amount} => {
             let mut client = c.borrow_mut();
             let tx =
-                prepare_tx(from_account, &to_address, change_account, amount, client.deref_mut(), &statements, &mut rng).unwrap();
+                prepare_tx(SystemTime::now(), from_account, &to_address, change_account, amount, client.deref_mut(), &statements, &mut rng).unwrap();
             println!("{}", serde_json::to_string(&tx).unwrap());
+        }
+        Command::CancelTx { id } => {
+            let mut client = c.borrow_mut();
+            cancel_payment(client.deref_mut(), id).unwrap();
         }
         Command::SignTx { sk, unsigned_tx } => {
             let unsigned_tx = serde_json::from_str(&unsigned_tx).unwrap();
             let signed_tx = sign_tx(&sk, unsigned_tx).unwrap();
-            println!("{}", hex::encode(signed_tx));
+            println!("{}", serde_json::to_string(&signed_tx).unwrap());
         }
         Command::BroadcastTx { signed_tx } => {
-            let tx = Bytes::from(hex::decode(&signed_tx).unwrap());
-            broadcast_tx(&tx).unwrap();
+            let mut client = c.borrow_mut();
+            let signed_tx = serde_json::from_str(&signed_tx).unwrap();
+            let txid = broadcast_tx(client.deref_mut(), &signed_tx).unwrap();
+            println!("{}", txid);
         }
     }
 }

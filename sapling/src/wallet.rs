@@ -31,7 +31,7 @@ use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{DiversifierIndex, ExtendedFullViewingKey};
 use zcash_primitives::consensus;
-use crate::wallet::transaction::{UTXO, Account};
+use crate::wallet::transaction::{UTXO, Account, SpendableNoteWithId};
 use std::ops::DerefMut;
 use std::rc::Rc;
 
@@ -679,9 +679,10 @@ impl WalletWrite for PostgresWallet {
     }
 }
 
-pub fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
+pub fn to_spendable_note(row: &Row) -> Result<SpendableNoteWithId, WalletError> {
+    let id_note: i32 = row.get(0);
     let diversifier = {
-        let d: Vec<_> = row.get(0);
+        let d: Vec<_> = row.get(1);
         if d.len() != 11 {
             return Err(WalletError::Error(anyhow::anyhow!(
                 "Invalid diversifier length",
@@ -692,10 +693,10 @@ pub fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
         Diversifier(tmp)
     };
 
-    let note_value = Amount::from_i64(row.get(1)).unwrap();
+    let note_value = Amount::from_i64(row.get(2)).unwrap();
 
     let rseed = {
-        let rcm_bytes: Vec<_> = row.get(2);
+        let rcm_bytes: Vec<_> = row.get(3);
 
         // We store rcm directly in the data DB, regardless of whether the note
         // used a v1 or v2 note plaintext, so for the purposes of spending let's
@@ -710,15 +711,19 @@ pub fn to_spendable_note(row: &Row) -> Result<SpendableNote, WalletError> {
     };
 
     let witness = {
-        let d: Vec<_> = row.get(3);
+        let d: Vec<_> = row.get(4);
         IncrementalWitness::read(&d[..]).map_err(WalletError::IO)?
     };
 
-    Ok(SpendableNote {
+    let note = SpendableNote {
         diversifier,
         note_value,
         rseed,
         witness,
+    };
+    Ok(SpendableNoteWithId {
+        id: id_note,
+        note,
     })
 }
 

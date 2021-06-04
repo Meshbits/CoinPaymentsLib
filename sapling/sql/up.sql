@@ -10,6 +10,18 @@ CREATE TABLE IF NOT EXISTS accounts (
     FOREIGN KEY (fvk) REFERENCES fvks(id_fvk)
 );
 CREATE UNIQUE INDEX account_address ON accounts(address);
+CREATE TABLE IF NOT EXISTS payments (
+    id_payment INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    datetime timestamp NOT NULL,
+    account INTEGER NOT NULL,
+    sender TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    change TEXT NOT NULL,
+    amount BIGINT,
+    paid BOOL,
+    txid TEXT,
+    FOREIGN KEY (account) REFERENCES accounts(account)
+);
 CREATE TABLE IF NOT EXISTS blocks (
     height INTEGER PRIMARY KEY,
     hash BYTEA NOT NULL,
@@ -39,9 +51,11 @@ CREATE TABLE IF NOT EXISTS received_notes (
     is_change BOOL,
     memo BYTEA,
     spent INTEGER,
+    payment INT,
     FOREIGN KEY (tx) REFERENCES transactions(id_tx),
     FOREIGN KEY (account) REFERENCES accounts(account),
     FOREIGN KEY (spent) REFERENCES transactions(id_tx),
+    FOREIGN KEY (payment) REFERENCES payments(id_payment),
     CONSTRAINT tx_received_output UNIQUE (tx, output_index)
 );
 CREATE INDEX received_notes_address ON received_notes(address);
@@ -80,8 +94,9 @@ CREATE TABLE IF NOT EXISTS utxos (
     script BYTEA NOT NULL,
     height INTEGER NOT NULL,
     spent BOOL NOT NULL,
-    spent_height INTEGER
+    spent_height INTEGER,
+    payment INT,
+    FOREIGN KEY (payment) REFERENCES payments(id_payment)
 );
 CREATE INDEX utxo_tx ON utxos(tx_hash);
 CREATE UNIQUE INDEX utxo_tx_idx ON utxos(tx_hash, output_index);
-

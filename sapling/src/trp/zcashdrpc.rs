@@ -173,6 +173,7 @@ mod tests {
     async fn test_get_raw_transaction() {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_raw_transaction("02ab7cdebad446f0963f58146ec154f8a95cc9c594450c83ba6b0e2996cf839d", &client, &config).await.unwrap();
+        let tx = get_raw_transaction("a0a8689597f119d02e07930c38d70c411e4b711f5d119f635bae31fe3d38d659", &client, &config).await.unwrap();
+        println!("{:?}", tx);
     }
 }

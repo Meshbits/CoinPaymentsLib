@@ -35,9 +35,12 @@ use zcash_primitives::sapling::keys::OutgoingViewingKey;
 use zcash_proofs::prover::LocalTxProver;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
 use crate::db;
-use postgres::GenericClient;
+use postgres::{GenericClient, Client};
 use crate::db::DbPreparedStatements;
 use std::ops::DerefMut;
+use std::alloc::System;
+use std::time::SystemTime;
+use itertools::Itertools;
 
 #[derive(Debug, Clone)]
 pub enum Account {
@@ -47,6 +50,7 @@ pub enum Account {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UnsignedTx {
+    pub id: i32,
     pub height: i64,
     pub fvk: String,
     pub trp_inputs: Vec<UTXO>,
@@ -58,6 +62,7 @@ pub struct UnsignedTx {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SaplingTxIn {
+    pub id: i32,
     pub amount: u64,
     pub address: String,
     pub diversifier: String,
@@ -72,27 +77,35 @@ pub struct SaplingTxOut {
     pub ovk: Option<String>,
 }
 
-trait NoteLike<TxIn> {
-    fn note_value(&self) -> Amount;
-    fn to_tx_input(&self, from_address: &str) -> Result<TxIn, WalletError>;
+pub struct SpendableNoteWithId {
+    pub id: i32,
+    pub note: SpendableNote,
 }
 
-impl NoteLike<SaplingTxIn> for SpendableNote {
+trait NoteLike<TxIn> {
+    fn id(&self) -> i32;
+    fn note_value(&self) -> Amount;
+    fn to_tx_input(&self, id: i32, from_address: &str) -> Result<TxIn, WalletError>;
+}
+
+impl NoteLike<SaplingTxIn> for SpendableNoteWithId {
+    fn id(&self) -> i32 { self.id }
     fn note_value(&self) -> Amount {
-        self.note_value
+        self.note.note_value
     }
 
-    fn to_tx_input(&self, from_address: &str) -> Result<SaplingTxIn, WalletError> {
-        let a = u64::from(self.note_value);
-        match self.rseed {
+    fn to_tx_input(&self, id: i32, from_address: &str) -> Result<SaplingTxIn, WalletError> {
+        let a = u64::from(self.note.note_value);
+        match self.note.rseed {
             Rseed::BeforeZip212(rcm) => {
                 let mut mp = Vec::<u8>::new();
-                self.witness.write(&mut mp).map_err(WalletError::IO)?;
+                self.note.witness.write(&mut mp).map_err(WalletError::IO)?;
 
                 let input = SaplingTxIn {
+                    id,
                     amount: a,
                     address: from_address.to_string(),
-                    diversifier: hex::encode(&self.diversifier.0),
+                    diversifier: hex::encode(&self.note.diversifier.0),
                     rcm: hex::encode(rcm.to_bytes()),
                     witness: hex::encode(mp),
                 };
@@ -105,6 +118,7 @@ impl NoteLike<SaplingTxIn> for SpendableNote {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UTXO {
+    pub id: i32,
     pub amount: u64,
     pub tx_hash: String,
     pub output_index: i32,
@@ -113,13 +127,19 @@ pub struct UTXO {
 }
 
 impl NoteLike<UTXO> for UTXO {
+    fn id(&self) -> i32 { self.id }
     fn note_value(&self) -> Amount {
         Amount::from_i64(self.amount as i64).unwrap()
     }
-
-    fn to_tx_input(&self, _from_address: &str) -> Result<UTXO, WalletError> {
+    fn to_tx_input(&self, _id: i32, _from_address: &str) -> Result<UTXO, WalletError> {
         Ok(self.clone())
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SignedTx {
+    pub id: i32,
+    pub raw_tx: String,
 }
 
 fn select_notes<TxIn, N: NoteLike<TxIn>, R: RngCore>(
@@ -127,7 +147,7 @@ fn select_notes<TxIn, N: NoteLike<TxIn>, R: RngCore>(
     spendable_notes: &mut Vec<N>,
     target_value: Amount,
     rng: &mut R,
-) -> Result<Vec<TxIn>, WalletError> {
+) -> crate::Result<Vec<TxIn>> {
     spendable_notes.shuffle(rng);
     let mut partial_sum = Amount::zero();
     let mut index = 0usize;
@@ -150,11 +170,12 @@ fn select_notes<TxIn, N: NoteLike<TxIn>, R: RngCore>(
 
     selected_notes
         .iter()
-        .map(|s| s.to_tx_input(from_address))
+        .map(|s| s.to_tx_input(s.id(), from_address))
         .collect::<Result<Vec<_>, _>>()
 }
 
 pub fn prepare_tx<C: GenericClient, R: RngCore>(
+    datetime: SystemTime,
     from_account: i32,
     to_address: &str,
     change_account: i32,
@@ -162,7 +183,7 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
     c: &mut C,
     statements: &DbPreparedStatements,
     rng: &mut R,
-) -> Result<UnsignedTx, WalletError> {
+) -> crate::Result<UnsignedTx> {
     let amount = Amount::from_i64(amount).map_err(|_| anyhow!("Cannot convert amount"))?;
     let target_value = amount + DEFAULT_FEE;
 
@@ -178,18 +199,22 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
     };
 
     let mut tx = UnsignedTx {
+        id: 0,
         height: i64::from(height),
         fvk: String::new(),
         trp_inputs: Vec::new(),
         sap_inputs: Vec::new(),
         output: None,
-        change_address,
+        change_address: change_address.clone(),
         change_fvk,
     };
 
     let mut ovk: Option<OutgoingViewingKey> = None;
 
-    match db::get_account(c, from_account)? {
+    let mut notes: Vec<i32> = vec![];
+    let mut utxos: Vec<i32> = vec![];
+
+    let from_address = match db::get_account(c, from_account)? {
         Account::Shielded(from_address, extfvk) => {
             tx.fvk = extfvk.clone();
             let extfvk =
@@ -200,15 +225,19 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
             let mut spendable_notes =
                 db::get_spendable_notes_by_address(c,statements, &from_address, u32::from(anchor_height))?;
             let mut tx_ins = select_notes(&from_address, &mut spendable_notes, target_value, rng)?;
+            tx_ins.iter().for_each(|txin| notes.push(txin.id));
             tx.sap_inputs.append(&mut tx_ins);
+            from_address
         }
         Account::Transparent(from_address) => {
             let mut spendable_notes =
                 db::get_spendable_transparent_notes_by_address(c, statements, &from_address)?;
             let mut tx_ins = select_notes(&from_address, &mut spendable_notes, target_value, rng)?;
+            tx_ins.iter().for_each(|txin| utxos.push(txin.id));
             tx.trp_inputs.append(&mut tx_ins);
+            from_address
         }
-    }
+    };
 
     RecipientAddress::decode(&Network::TestNetwork, to_address)
         .ok_or_else(|| WalletError::Error(anyhow!("Could not decode address {}", to_address)))?;
@@ -219,10 +248,14 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
         ovk: ovk.map(|ovk| hex::encode(ovk.0)),
     });
 
+    let id_payment = db::store_payment(c, datetime, from_account, &from_address, &to_address,
+    &change_address, i64::from(amount), &notes, &utxos)?;
+    tx.id = id_payment;
+
     Ok(tx)
 }
 
-pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> Result<Bytes, WalletError> {
+pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> crate::Result<SignedTx> {
     let prover = LocalTxProver::with_default_location()
         .ok_or_else(|| WalletError::Error(anyhow!("Could not build local prover")))?;
     let height = BlockHeight::from_u32(unsigned_tx.height as u32);
@@ -234,6 +267,7 @@ pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> Result<Bytes, Wal
             secp256k1::SecretKey::from_str(spending_key).context("Cannot parse secret key")?;
         let mut tx_hash = [0u8; 32];
         hex::decode_to_slice(&input.tx_hash, &mut tx_hash)?;
+        tx_hash.reverse();
         let utxo = OutPoint::new(tx_hash, input.output_index as u32);
         let hex = hex::decode(&input.hex).unwrap();
         let script = Script(hex);
@@ -306,27 +340,34 @@ pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> Result<Bytes, Wal
     let mut raw_tx = vec![];
     tx.write(&mut raw_tx).map_err(WalletError::IO)?;
 
-    Ok(Bytes::from(raw_tx))
+    let raw_tx = hex::encode(raw_tx);
+    Ok(SignedTx {
+        id: unsigned_tx.id,
+        raw_tx,
+    })
 }
 
-pub fn broadcast_tx(tx: &Bytes) -> Result<String, WalletError> {
+pub fn broadcast_tx(c: &mut Client, signed_tx: &SignedTx) -> crate::Result<String> {
     let r = Runtime::new().unwrap();
-    r.block_on(async {
+    let res = r.block_on(async {
         let mut client = connect_lightnode().await?;
         let res = client
             .send_transaction(RawTransaction {
-                data: tx.to_vec(),
+                data: hex::decode(&signed_tx.raw_tx)?,
                 height: 0,
             })
             .await?
             .into_inner();
-        if res.error_code == 0 {
-            let tx_id: Value = serde_json::from_str(&res.error_message).unwrap();
-            Ok(tx_id.as_str().unwrap().to_string())
-        } else {
-            Err(WalletError::Error(anyhow!(res.error_message)))
-        }
-    })
+        Ok::<_, WalletError>(res)
+    })?;
+    if res.error_code == 0 {
+        let tx_id: Value = serde_json::from_str(&res.error_message).unwrap();
+        let tx_id = tx_id.as_str().unwrap().to_string();
+        db::mark_paid(c, signed_tx.id, &tx_id)?;
+        Ok(tx_id)
+    } else {
+        Err(WalletError::Error(anyhow!(res.error_message)))
+    }
 }
 
 #[cfg(test)]
@@ -338,19 +379,18 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn setup() -> DbPreparedStatements {
+    fn setup() -> (Rc<RefCell<Client>>, DbPreparedStatements) {
         let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
         let c = Rc::new(RefCell::new(connection));
-        let statements = DbPreparedStatements::prepare(c).unwrap();
-        statements
+        let statements = DbPreparedStatements::prepare(c.clone()).unwrap();
+        (c.clone(), statements)
     }
 
     #[test]
     fn test_prepare_shielded_tx() {
         let mut rng = thread_rng();
-        let statements = setup();
-        let mut c = statements.client.clone();
-        let tx = prepare_tx(1,
+        let (c, statements) = setup();
+        let tx = prepare_tx(SystemTime::UNIX_EPOCH, 1,
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             20_000_000,
@@ -362,9 +402,8 @@ mod tests {
     #[test]
     fn test_prepare_transparent_tx() {
         let mut rng = thread_rng();
-        let statements = setup();
-        let mut c = statements.client.clone();
-        let tx = prepare_tx(2,
+        let (c, statements) = setup();
+        let tx = prepare_tx(SystemTime::UNIX_EPOCH, 2,
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             500_000,
@@ -379,7 +418,7 @@ mod tests {
         let tx = serde_json::from_str::<UnsignedTx>(tx_json).unwrap();
         let signed_tx = sign_tx("secret-extended-key-test1qfkvrtdpqqqqpqqr6g4fx2nwjx9788l0deqqtq9mcfmar4vk3dwtcjwfqaklemn9j4em4cggyw6n8heukq963nqx6upz7ktyg4kyeanmal5l3ssely5q4nd2jcsnulytl5zpyp7zyftrfhzfyec9rdf3hyg9cm70jeg0zrs8jzp7wak2envsy8tv9txq2tkkfa2y99rfxztza3lhvsswmz4q9p2xe05kh4yg7q3nad5s2vjj763maju3hpkpwwgavk7jpl2y8vqu5jqega2yj",
                 tx).unwrap();
-        assert!(!signed_tx.is_empty());
+        assert!(!signed_tx.raw_tx.is_empty());
     }
 
     #[test]
@@ -391,6 +430,13 @@ mod tests {
             tx,
         )
         .unwrap();
-        assert!(!signed_tx.is_empty());
+        assert!(!signed_tx.raw_tx.is_empty());
+    }
+
+    #[test]
+    fn test_broadcast_tx() {
+        let mut connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let signed_tx: SignedTx = serde_json::from_str(r#"{"id":21,"raw_tx":"0400008085202f8901a0a8689597f119d02e07930c38d70c411e4b711f5d119f635bae31fe3d38d659000000006a47304402202f85a86d3716c9825c9d426b757a1c48a1cd16495f7d5a298ba55d8494f3cf33022004ffaeeec82ba9d203bf5c4bd4064d09997a0bfab698250cef27199cdb384014012103c01e7425647bdefa82b12d9bad5e3e6865bee0502694b94ca58b666abc0a5c3bffffffff000000000038e51500c862f8ffffffffff00028f7e59e53cdb8437e485bc55cb817ad953190c7f6aca539337939d57581eaf30de46ccfcc2eccd88f72e5513b05ac0b069ab9d03ea270d3b11d9da9acb467165825a342833e3b64d1ce05a24610129e60fe338491578b1512d3d8deaa7a102e1fb7cd191370313be5e6131fbe9e398fe618dfc4534b214e1b54421f52b040970827c7934eec8229f274e9b813f06d4a151ac67b9de6ddb8788d0fe3871938acddacadf481eb83094399229e0aee178ad6128478aee5608dda2147506bcfdf9feed4983be05fd0619b910fbfe613e7e4862a4bae337188b2c6996dfa6496f08623d26d0a1b4fb4b206a2793fe84aaf307b3aca05dc3f4bd3c94bc1da01dedb9e4b63b705850f7b1b76ed675eb1f39eef9e1e55d90ea1e9fc768f3cc75bb270f9778f2c85b12a2979cd25133b2a69f168647e62adb174cfd4886734b02aca4d95d7f2d1ee74c02d1b556b7e6a692bb20f08bd9f6c4bb111dd11c875578abc4350c61d36afd709cbb89252e4161dd933edb4f74d292e0a739c27a37e138022c3cd78fddbded3873c1315b9da4b6209a8378f1cd560a7ce565c1c6cbc93e71510bb64e5f7754418b198a5f00c28b1acbcddc680590c2dd33b315ab38198dadcfa437fe8c9922280ba6b47c8077501a945f63697164b122fa50515dc220ee50210a7e8a44c5af8cad4d1ba8e3b5a6a27f160eba211a3b745d089dd873f83166634013e7067e12a59da0f0d8ed0c600c01c2d05b8beb19209efd787ec7944e35228c1ad75a428ffc22841e19e4c5055d9058994ee9320a9fa8abd5a9813359287eb6dd3975f624ce878771312c734cbd4b773103f2fff076d381003b55a8b2c1ffcf3244bd4f9f7ec1f6f5e398531ee203a1f22be7b6fdeaf98efacb6f1a289ad53e91af4dbcd7f6f8718d85e528eb7e061989e4f372dc27fc49e05ed23e8bcf234d209ace316f803c3388f298b448db01c992349fa784545fc49f0d39cedd61ffe94a022e5dbc60d4cbee6e19724381bceba6e1c66dcc8d0098b3ebe5afb43df909e61e65c8515af864916292671f3c128ec72a04ba6485a6952996e73ddb21178f03d459ba604a8cdc31e4be682f8c4b65684a9ea8451c43171da9c5e23873290aa337cd7c1bae9a7f4421c7663d07334ad05d21a0c7a368ea0aacfd268096b342581a740a1b454c418621887769d7eab0fc9eebd65c0fec05403f2b8fc32f165bcc3ca28627076c5989a0f1cc8b4b87cea9ac4e99900f895c552b98e620630cf05d90db8ebe96f594cc0b432daae775d2b2be4618a154a92ca688a70650ff22f754c9294f1252015499b466df4a60f0a6efdda5a49525ab9e4f2329af25b388ef5f3368452198f05cfb5c190adb23e05ddaca4798488f5580baa494339b81908035c101da796df09692a089d800e7d73f829ce38711cdb2e7e1fcf5fb7df79e00c81cc68498da2cedc3e10d9c7dc2a6b0fec17eccd6d38d73a90fadae7d9314f516f841f8094a02be9095777317b55ef27bf8b4493d8d0293f697633f0647a89e8a94dd04ec8516b5f8adbaa01ac4d91798ad65d77724b24a6c4e3eecb8344358ff3c9c7bd0342f0f5b7275a58ab786bba4381da57d8471da071ad59504df3acc6ea7e1bbe18701c2190aeb9fa89f588198cd802c53efc942caf2bfcd620c3717d7f9444c37f33248bf546bf10c240c43e8119ed6d4769a7a78439954531c614a203c76f47ac1e124926f8f5e8b546a68c850fbe3d5c46c657c243cb4283719173df498857882dc2668b880b348ff5d370ab1cd683548c60c16c6036d25f72a017dea825d9cfdb571d14fecf19cf750e57922f9e5a9336be8d22ffcb4e554a2aedb954fbf9a275153c0355605e2e35f35d2c39cb09f02e8b26ec54ed189f4650fd51c3ff0cc677f6ae929ea9e454e0cf4bd13c45aa8337a7fd5991e3aac5465b03bb4e7e37e8571d44ea474db0bd02506b0cb6399f8eb3da141ebd50933260043d5d9abbcd9315049c83059cbd2a3f594422907176dfb286c8cb22adc4533c85171d7ceb3450588b057773455df5bceedd0e7a3d841ae912475b7f6fd61c2e897a990a17368ccd86e89ef83ee69e39097793ec2810a10ac75cb7730064dfa623b1f2c74a3a2818d62ecbf99024508d0136c0a28ac3366036f0f19a6b16a806067b239666d8cd92b74c5dbe5e8deda0c5dcead199ed254131dc8e58fe7e87261c509e13918a62a1347c3190b3ff477cf4a07f493bef0180463b0fe331b1d9a9683da27c34608b1e4aa5c3d9c9ce09926737769d94cc66edebd331e89c140ea315f6798223432c8b1ad5d4ed44de3a83effbd510c3c0c54c39b30fe5b5cc7467ad9a610305e26a879c1a194ef34e43a3ffbd02da013a476b97bcf17035246a4e6c8beca4fb2fd1770494e8db1c0bbb99c06ef8d24ecf304840290b1d5a6fc728c793c2b708f3ddcad59bd8a94edf7a7febf702745e1d7b6abdcc9a36a7bd75a922652cfea291b14114e112c9c073587add4958b64475b7ddaf82958ddb70aeb7155f9c182fd38be38de2510b6dd09ce98dae8764f5559bdd4fbcbe29546a2929106751f13d9bac6f6ddf89309e04e76d774c97495f9d98eb2d30a840e6d1f3f64d2d274834dc9e1573fff1bc2e1dbd22be6afc51c88e0efe954d114ddb109a0f2b9fb9e4f01fcd830e2af00161669bd6b3663caf3001636c35cfe16a192bac02c5aee0511896281b8b0393dd675e69167b61305ad1c4972b8a049fdc7ec56e257e571903e20b24cdbe07e00"}"#).unwrap();
+        broadcast_tx(&mut connection, &signed_tx).unwrap();
     }
 }
