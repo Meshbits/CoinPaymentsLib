@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS received_notes (
     nf BYTEA NOT NULL UNIQUE,
     is_change BOOL,
     memo BYTEA,
+    height INTEGER NOT NULL,
     spent INTEGER,
     payment INT,
     FOREIGN KEY (tx) REFERENCES transactions(id_tx),
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS sent_notes (
 CREATE TABLE IF NOT EXISTS utxos (
     id_utxo INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     tx_hash BYTEA NOT NULL,
+    account INT NOT NULL,
     address TEXT NOT NULL,
     output_index INTEGER NOT NULL,
     value BIGINT NOT NULL,
@@ -96,6 +98,7 @@ CREATE TABLE IF NOT EXISTS utxos (
     spent BOOL NOT NULL,
     spent_height INTEGER,
     payment INT,
+    FOREIGN KEY (account) REFERENCES accounts(account),
     FOREIGN KEY (payment) REFERENCES payments(id_payment)
 );
 CREATE INDEX utxo_tx ON utxos(tx_hash);

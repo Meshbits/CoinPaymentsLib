@@ -83,8 +83,8 @@ impl PostgresWallet {
                 "UPDATE received_notes SET spent = $1 WHERE nf = $2"
             )?,
             stmt_upsert_received_note: connection.prepare(
-                "INSERT INTO received_notes (tx, output_index, account, address, diversifier, value, rcm, memo, nf, is_change)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                "INSERT INTO received_notes (tx, output_index, account, address, diversifier, value, rcm, memo, nf, is_change, height)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     ON CONFLICT (tx, output_index) DO UPDATE
                     SET account = excluded.account,
                         address = excluded.address,
@@ -93,7 +93,8 @@ impl PostgresWallet {
                         rcm = excluded.rcm,
                         nf = coalesce(excluded.nf, received_notes.nf),
                         memo = coalesce(excluded.memo, received_notes.memo),
-                        is_change = coalesce(excluded.is_change, received_notes.is_change)
+                        is_change = coalesce(excluded.is_change, received_notes.is_change),
+                        height = excluded.height
                     RETURNING id_note",
             )?,
             stmt_upsert_sent_note: connection.prepare(
@@ -227,6 +228,11 @@ impl<'a> WalletDbTransaction<'a> {
             &[&address, &account],
         )?;
         let account: i32 = row.get(0);
+        let row = self.transaction.query_one(
+            "SELECT block FROM transactions WHERE id_tx = $1",
+            &[&tx_ref],
+        )?;
+        let height: i32 = row.get(0);
 
         let sql_args: &[&(dyn ToSql + Sync)] = &[
             &tx,
@@ -239,6 +245,7 @@ impl<'a> WalletDbTransaction<'a> {
             &memo,
             &nf_bytes,
             &is_change,
+            &height,
         ];
 
         self.transaction

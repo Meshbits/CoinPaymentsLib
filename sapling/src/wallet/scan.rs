@@ -45,17 +45,11 @@ impl BlockSource for BlockLightwallet {
     {
         let from_height = u32::from(from_height) + 1;
         let r = Runtime::new().unwrap();
-        let to_height = r.block_on(async move {
-            let mut client = connect_lightnode().await.unwrap();
-            let latest_block_id = client
-                .get_latest_block(ChainSpec {})
-                .await
-                .unwrap()
-                .into_inner();
+        let tip_height = get_latest_height()?;
+        let to_height =
             from_height
                 .saturating_add(limit.unwrap_or(u32::MAX) - 1)
-                .min(latest_block_id.height as u32)
-        });
+                .min(tip_height);
 
         let blocks = r.block_on(async {
             let mut client = connect_lightnode().await.unwrap();
@@ -103,6 +97,21 @@ pub fn validate() -> anyhow::Result<(), WalletError> {
     Ok(())
 }
 
+pub fn get_latest_height() -> crate::Result<u32> {
+    let r = Runtime::new().unwrap();
+    let tip_height = r.block_on(async {
+        let mut client = connect_lightnode().await?;
+        let tip_height = client
+            .get_latest_block(ChainSpec {})
+            .await
+            .unwrap()
+            .into_inner()
+            .height as u32;
+        Ok::<_, WalletError>(tip_height)
+    })?;
+    Ok(tip_height)
+}
+
 pub fn get_scan_range() -> anyhow::Result<Range<u32>, WalletError> {
     let wallet = PostgresWallet::new().unwrap();
     let sapling_activation_height: u32 = Network::TestNetwork.activation_height(NetworkUpgrade::Sapling).unwrap().into();
@@ -111,16 +120,7 @@ pub fn get_scan_range() -> anyhow::Result<Range<u32>, WalletError> {
             .unwrap_or(sapling_activation_height - 1)
     })? + 1;
     let r = Runtime::new().unwrap();
-    let tip_height = r.block_on(async {
-        let mut client = connect_lightnode().await.unwrap();
-        let tip_height = client
-            .get_latest_block(ChainSpec {})
-            .await
-            .unwrap()
-            .into_inner()
-            .height as u32;
-        tip_height + 1
-    });
+    let tip_height = get_latest_height()? + 1;
     let to_height = tip_height.min(from_height + MAX_CHUNK);
     Ok(from_height..to_height)
 }

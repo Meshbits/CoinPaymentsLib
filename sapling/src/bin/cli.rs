@@ -6,7 +6,7 @@ use sapling::error::WalletError::Postgres;
 use postgres::{NoTls, Client};
 use std::cell::RefCell;
 use std::rc::Rc;
-use sapling::db::{self, DbPreparedStatements, import_address, generate_keys, cancel_payment};
+use sapling::db::{self, DbPreparedStatements, get_balance, import_address, generate_keys, cancel_payment};
 use std::ops::DerefMut;
 use std::time::SystemTime;
 
@@ -34,6 +34,10 @@ enum Command {
     GenerateNewAddress {
         id_fvk: i32,
         diversifier_index: u128,
+    },
+    GetBalance {
+        account: i32,
+        min_confirmations: Option<i32>,
     },
     PrepareTx {
         from_account: i32,
@@ -90,6 +94,12 @@ fn main() {
             let mut client = c.borrow_mut();
             let (addr, di) = generate_keys(client.deref_mut(), id_fvk, diversifier_index).unwrap();
             println!("{} {}", &addr, di);
+        }
+        Command::GetBalance { account, min_confirmations } => {
+            let mut client = c.borrow_mut();
+            let min_confirmations = min_confirmations.unwrap_or(1);
+            let balance = get_balance(client.deref_mut(), account, min_confirmations).unwrap();
+            println!("{}", balance);
         }
         Command::PrepareTx { from_account, to_address, change_account, amount} => {
             let mut client = c.borrow_mut();

@@ -1,7 +1,9 @@
+use crate::db;
 use crate::error::WalletError;
+use crate::wallet::scan::get_latest_height;
 use crate::wallet::to_spendable_note;
-use crate::wallet::transaction::{Account, UTXO, SpendableNoteWithId};
-use anyhow::anyhow;
+use crate::wallet::transaction::{Account, SpendableNoteWithId, UTXO};
+use anyhow::{anyhow, Context};
 use postgres::{Client, GenericClient, Statement};
 use std::cell::RefCell;
 use std::cmp;
@@ -40,9 +42,9 @@ impl DbPreparedStatements {
             )?,
             stmt_select_trp_notes: c.prepare("SELECT id_utxo, tx_hash, output_index, value, script FROM utxos WHERE address = $1 AND NOT spent AND payment IS NULL")?,
             upsert_spent_utxo: c.prepare(
-                "INSERT INTO utxos(tx_hash, address, output_index, value, script,
+                "INSERT INTO utxos(tx_hash, account, address, output_index, value, script,
                 height, spent, spent_height)
-                VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (tx_hash, output_index) DO UPDATE SET
                 spent = excluded.spent,
                 spent_height = excluded.spent_height",
@@ -173,13 +175,18 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
 }
 
 pub fn get_account<C: GenericClient>(c: &mut C, id: i32) -> crate::Result<Account> {
-    let row = c.query_one("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
-    let address: String = row.get(0);
-    let fvk: Option<String> = row.get(1);
-    Ok(match fvk {
-        Some(fvk) => Account::Shielded(address, fvk),
-        None => Account::Transparent(address),
-    })
+    let row = c.query_opt("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
+    match row {
+        Some(row) => {
+            let address: String = row.get(0);
+            let fvk: Option<String> = row.get(1);
+            Ok(match fvk {
+                Some(fvk) => Account::Shielded(address, fvk),
+                None => Account::Transparent(address),
+            })
+        }
+        None => Err(WalletError::Error(anyhow!("Invalid account ID"))),
+    }
 }
 
 pub fn get_all_trp_addresses<C: GenericClient>(c: &mut C) -> crate::Result<Vec<(i32, String)>> {
@@ -246,11 +253,12 @@ pub struct Payment {
     pub paid: bool,
 }
 
-pub fn get_payment<C: GenericClient>(
-    client: &mut C,
-    id_payment: i32) -> crate::Result<Payment> {
-    let row = client.query_one("SELECT datetime, account, sender, recipient,
-        change, amount, paid FROM payments WHERE id_payment = $1", &[&id_payment])?;
+pub fn get_payment<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<Payment> {
+    let row = client.query_one(
+        "SELECT datetime, account, sender, recipient,
+        change, amount, paid FROM payments WHERE id_payment = $1",
+        &[&id_payment],
+    )?;
     let datetime: SystemTime = row.get(0);
     let account: i32 = row.get(1);
     let sender: String = row.get(2);
@@ -259,7 +267,13 @@ pub fn get_payment<C: GenericClient>(
     let amount: i64 = row.get(5);
     let paid: bool = row.get(6);
     Ok(Payment {
-        datetime, account, sender, recipient, change, amount, paid,
+        datetime,
+        account,
+        sender,
+        recipient,
+        change,
+        amount,
+        paid,
     })
 }
 
@@ -272,37 +286,55 @@ pub fn store_payment<C: GenericClient>(
     change: &str,
     amount: i64,
     notes: &[i32],
-    utxos: &[i32]
+    utxos: &[i32],
 ) -> crate::Result<i32> {
-    let row = client.query_one("INSERT INTO payments(datetime, account, sender, recipient,
+    let row = client.query_one(
+        "INSERT INTO payments(datetime, account, sender, recipient,
         change, amount, paid) VALUES ($1, $2, $3, $4, $5, $6, FALSE)
-        RETURNING id_payment", &[
-        &datetime,
-        &account,
-        &sender,
-        &recipient,
-        &change,
-        &amount
-    ])?;
+        RETURNING id_payment",
+        &[&datetime, &account, &sender, &recipient, &change, &amount],
+    )?;
     let id: i32 = row.get(0);
     for utxo in utxos.iter() {
-        client.execute("UPDATE utxos SET payment = $1 WHERE id_utxo = $2", &[&id, &utxo])?;
+        client.execute(
+            "UPDATE utxos SET payment = $1 WHERE id_utxo = $2",
+            &[&id, &utxo],
+        )?;
     }
     for note in notes.iter() {
-        client.execute("UPDATE received_notes SET payment = $1 WHERE id_note = $2", &[&id, &note])?;
+        client.execute(
+            "UPDATE received_notes SET payment = $1 WHERE id_note = $2",
+            &[&id, &note],
+        )?;
     }
     Ok(id)
 }
 
-pub fn mark_paid<C: GenericClient>(client: &mut C, id_payment: i32, txid: &str) -> crate::Result<()> {
-    client.execute("UPDATE payments SET paid = TRUE, txid = $2 WHERE id_payment = $1", &[&id_payment, &txid])?;
+pub fn mark_paid<C: GenericClient>(
+    client: &mut C,
+    id_payment: i32,
+    txid: &str,
+) -> crate::Result<()> {
+    client.execute(
+        "UPDATE payments SET paid = TRUE, txid = $2 WHERE id_payment = $1",
+        &[&id_payment, &txid],
+    )?;
     Ok(())
 }
 
 pub fn cancel_payment<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<()> {
-    client.execute("UPDATE payments SET paid = FALSE WHERE id_payment = $1", &[&id_payment])?;
-    client.execute("UPDATE utxos SET payment = NULL WHERE payment = $1", &[&id_payment])?;
-    client.execute("UPDATE received_notes SET payment = NULL WHERE payment = $1", &[&id_payment])?;
+    client.execute(
+        "UPDATE payments SET paid = FALSE WHERE id_payment = $1",
+        &[&id_payment],
+    )?;
+    client.execute(
+        "UPDATE utxos SET payment = NULL WHERE payment = $1",
+        &[&id_payment],
+    )?;
+    client.execute(
+        "UPDATE received_notes SET payment = NULL WHERE payment = $1",
+        &[&id_payment],
+    )?;
     Ok(())
 }
 
@@ -318,11 +350,33 @@ pub fn trp_rewind_to_height<C: GenericClient>(
     Ok(())
 }
 
+pub fn get_balance<C: GenericClient>(
+    client: &mut C,
+    account: i32,
+    min_confirmations: i32,
+) -> crate::Result<i64> {
+    let tip_height = get_latest_height()? as i32;
+    let min_height = (tip_height - min_confirmations) as i32;
+    let balance = match db::get_account(client, account)? {
+        Account::Shielded(_, _) => {
+            let row = client.query_one("SELECT SUM(value)::BIGINT FROM received_notes WHERE spent IS NULL AND payment IS NULL AND account = $1 AND height <= $2", &[&account, &min_height])?;
+            let balance: Option<i64> = row.get(0);
+            balance.unwrap_or(0)
+        }
+        Account::Transparent(address) => {
+            let row = client.query_one("SELECT SUM(value)::BIGINT FROM utxos WHERE NOT spent AND payment IS NULL AND address = $1 AND height <= $2", &[&address, &min_height])?;
+            let balance: Option<i64> = row.get(0);
+            balance.unwrap_or(0)
+        }
+    };
+    Ok(balance)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::CONNECTION_STRING;
-    use postgres::{NoTls, Client};
     use super::*;
+    use crate::CONNECTION_STRING;
+    use postgres::{Client, NoTls};
 
     #[test]
     fn test_payment() {

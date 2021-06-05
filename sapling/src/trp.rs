@@ -62,13 +62,14 @@ impl TrpWallet {
     fn scan_inputs(&self, tx: &Transaction, client: &mut Client) -> Result<(), WalletError> {
         for input in tx.vin.iter() {
             if let Some(ref address) = input.address {
-                if self.addresses.contains_key(address.as_str()) {
+                if let Some(account) = self.addresses.get(address.as_str()) {
                     let txid = hex::decode(input.txid.as_ref().unwrap())?;
-                    let script: Option<String> = None;
+                    let script: Vec<u8> = vec![];
                     client.execute(
                         &self.statements.upsert_spent_utxo,
                         &[
                             &txid,
+                            account,
                             address,
                             &(input.vout.unwrap() as i32),
                             &(input.valueSat.unwrap() as i64),
@@ -87,16 +88,17 @@ impl TrpWallet {
     fn scan_outputs(&self, tx: &Transaction, client: &mut Client) -> Result<(), WalletError> {
         for (index, output) in tx.vout.iter().enumerate() {
             for address in output.scriptPubKey.addresses.iter() {
-                if self.addresses.contains_key(address.as_str()) {
+                if let Some(account) = self.addresses.get(address.as_str()) {
                     let txid = hex::decode(&tx.txid)?;
                     client.execute(
                         &self.statements.upsert_spent_utxo,
                         &[
                             &txid,
+                            account,
                             address,
                             &(index as i32),
                             &(output.valueSat as i64),
-                            &Some(hex::decode(&output.scriptPubKey.hex).unwrap()),
+                            &hex::decode(&output.scriptPubKey.hex).unwrap(),
                             &(tx.height.unwrap() as i32),
                             &false,
                             &Option::<i32>::None
