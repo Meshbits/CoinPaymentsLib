@@ -155,13 +155,16 @@ mod tests {
     use super::*;
     use crate::testconfig::{TEST_DATADIR, TEST_ZCASHD_URL};
     use crate::wallet::PostgresWallet;
+    use crate::CONNECTION_STRING;
+    use postgres::NoTls;
 
-    // #[test]
-    // fn test_with_block() {
-    //     let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
-    //     let sapling_wallet = PostgresWallet::new().unwrap();
-    //     let mut wallet = TrpWallet::new(sapling_wallet.connection).unwrap();
-    //     wallet.load_transparent_addresses_from_db().unwrap();
-    //     wallet.scan_range(1_432_000..1_432_138, &config).unwrap();
-    // }
+    #[test]
+    fn test_with_block() {
+        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let client = Arc::new(Mutex::new(client));
+        let mut wallet = TrpWallet::new(client).unwrap();
+        wallet.load_transparent_addresses_from_db().unwrap();
+        wallet.scan_range(1_432_000..1_432_138, &config).unwrap();
+    }
 }

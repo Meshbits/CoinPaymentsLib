@@ -735,40 +735,42 @@ pub fn to_spendable_note(row: &Row) -> Result<SpendableNoteWithId, WalletError> 
 mod tests {
     use super::*;
 
-    // #[test]
-    // fn test_upsert() {
-    //     let w = PostgresWallet::new().unwrap();
-    //     let mut client = w.connection.lock().unwrap();
-    //     let _ = client.execute(
-    //         &w.stmt_insert_block,
-    //         &[&100000, &vec![0u8; 32], &0, &vec![0u8; 32]],
-    //     );
-    //
-    //     let mut db_tx = WalletDbTransaction {
-    //         statements: &w,
-    //         transaction: client.transaction().unwrap(),
-    //     };
-    //
-    //     let tx = WalletTx {
-    //         txid: TxId([0; 32]),
-    //         index: 0,
-    //         num_spends: 0,
-    //         num_outputs: 0,
-    //         shielded_spends: vec![],
-    //         shielded_outputs: vec![],
-    //     };
-    //     db_tx.put_tx_meta(&tx, BlockHeight::from_u32(1)).unwrap();
-    //
-    //     let tx = WalletTx {
-    //         txid: TxId([0; 32]),
-    //         index: 1,
-    //         num_spends: 0,
-    //         num_outputs: 0,
-    //         shielded_spends: vec![],
-    //         shielded_outputs: vec![],
-    //     };
-    //     db_tx.put_tx_meta(&tx, BlockHeight::from_u32(1)).unwrap();
-    //
-    //     db_tx.transaction.commit().unwrap();
-    // }
+    #[test]
+    fn test_upsert() {
+        let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let client = Arc::new(Mutex::new(client));
+        let w = PostgresWallet::new(client.clone()).unwrap();
+        let mut client = client.lock().unwrap();
+        let _ = client.execute(
+            &w.stmt_insert_block,
+            &[&100000, &vec![0u8; 32], &0, &vec![0u8; 32]],
+        );
+
+        let mut db_tx = WalletDbTransaction {
+            statements: &w,
+            transaction: client.transaction().unwrap(),
+        };
+
+        let tx = WalletTx {
+            txid: TxId([0; 32]),
+            index: 0,
+            num_spends: 0,
+            num_outputs: 0,
+            shielded_spends: vec![],
+            shielded_outputs: vec![],
+        };
+        db_tx.put_tx_meta(&tx, BlockHeight::from_u32(100000)).unwrap();
+
+        let tx = WalletTx {
+            txid: TxId([0; 32]),
+            index: 1,
+            num_spends: 0,
+            num_outputs: 0,
+            shielded_spends: vec![],
+            shielded_outputs: vec![],
+        };
+        db_tx.put_tx_meta(&tx, BlockHeight::from_u32(100000)).unwrap();
+
+        db_tx.transaction.commit().unwrap();
+    }
 }
