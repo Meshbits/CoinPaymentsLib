@@ -1,15 +1,14 @@
 use crate::error::WalletError;
 use crate::grpc::RawTransaction;
-use crate::wallet::PostgresWallet;
+
 use anyhow::{anyhow, Context};
 use jubjub::Fr;
 
-use serde::{Deserialize, Serialize};
+
 use zcash_client_backend::address::RecipientAddress;
-use zcash_client_backend::data_api::WalletRead;
+
 use zcash_client_backend::encoding::{
     decode_extended_full_viewing_key, decode_extended_spending_key, decode_payment_address,
-    encode_extended_full_viewing_key,
 };
 use zcash_primitives::consensus::{BlockHeight, BranchId, Network};
 use zcash_primitives::constants::testnet::{
@@ -24,19 +23,19 @@ use zcash_primitives::transaction::components::{Amount, OutPoint, TxOut};
 use crate::db;
 use crate::db::DbPreparedStatements;
 use crate::wallet::scan::connect_lightnode;
-use bytes::Bytes;
-use itertools::Itertools;
+
+
 use postgres::{Client, GenericClient};
 use rand::prelude::SliceRandom;
 use rand::RngCore;
 use serde_json::Value;
-use std::alloc::System;
-use std::ops::DerefMut;
+
+// use std::ops::DerefMut;
 use std::str::FromStr;
 use std::time::SystemTime;
 use tokio::runtime::Runtime;
 use zcash_client_backend::wallet::SpendableNote;
-use zcash_primitives::consensus;
+
 use zcash_primitives::legacy::Script;
 use zcash_primitives::sapling::keys::OutgoingViewingKey;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
@@ -352,17 +351,17 @@ mod tests {
     use crate::CONNECTION_STRING;
     use postgres::{Client, NoTls};
     use rand::thread_rng;
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    
+    
     use std::sync::{Arc, Mutex};
 
     fn setup() -> (Arc<Mutex<Client>>, DbPreparedStatements) {
         let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
-        let mut c = Arc::new(Mutex::new(client));
+        let c = Arc::new(Mutex::new(client));
         let mut client = c.lock().unwrap();
-        client.deref_mut().execute("UPDATE received_notes SET payment = NULL", &[]).unwrap();
-        client.deref_mut().execute("UPDATE utxos SET payment = NULL", &[]).unwrap();
-        let statements = DbPreparedStatements::prepare(client.deref_mut()).unwrap();
+        client.execute("UPDATE received_notes SET payment = NULL", &[]).unwrap();
+        client.execute("UPDATE utxos SET payment = NULL", &[]).unwrap();
+        let statements = DbPreparedStatements::prepare(&mut client).unwrap();
         (c.clone(), statements)
     }
 
@@ -374,7 +373,7 @@ mod tests {
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             20_000_000,
-                            c.lock().unwrap().deref_mut(), &statements,
+                            &mut *c.lock().unwrap(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }
@@ -387,7 +386,7 @@ mod tests {
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             500_000,
-                            c.lock().unwrap().deref_mut(), &statements,
+                            &mut *c.lock().unwrap(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }

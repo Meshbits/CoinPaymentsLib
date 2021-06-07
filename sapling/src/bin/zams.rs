@@ -1,21 +1,21 @@
 use std::net::{SocketAddr, Ipv4Addr};
 use tonic::transport::Server;
 use sapling::error::{WalletError};
-use anyhow::Context;
+
 use tonic::{Request, Response};
 use sapling::db::{get_balance, DbPreparedStatements, generate_address, import_address, cancel_payment};
 use postgres::{Client, NoTls};
 use sapling::{CONNECTION_STRING, prepare_tx, db, scan_chain, ZcashdConf, get_latest_height, broadcast_tx};
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use std::borrow::BorrowMut;
+
 use tokio::runtime::Runtime;
 use tokio::task::block_in_place;
 use std::time::{SystemTime, Duration};
 use rand::rngs::OsRng;
-use rand::thread_rng;
+
 use sapling::zams_rpc as grpc;
-use sapling::zams_rpc::{PubKeyId, AccountCursor, AddressType, pub_key, BlockHeight};
+use sapling::zams_rpc::{PubKeyId, AccountCursor, pub_key};
 use zcash_client_backend::address::RecipientAddress;
 use zcash_primitives::consensus::TestNetwork;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
@@ -153,7 +153,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
 
     async fn rewind(
         &self,
-        request: Request<grpc::BlockHeight>,
+        _request: Request<grpc::BlockHeight>,
     ) -> Result<Response<grpc::Empty>, tonic::Status> {
         todo!()
     }

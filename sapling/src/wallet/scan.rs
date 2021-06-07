@@ -1,11 +1,11 @@
 use crate::grpc::compact_tx_streamer_client::CompactTxStreamerClient;
-use crate::grpc::{BlockId, BlockRange, ChainSpec, TreeState};
+use crate::grpc::{BlockId, BlockRange, ChainSpec};
 
 use prost::bytes::BytesMut;
 use prost::Message as M;
 use protobuf::Message;
 
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::{Runtime};
 use tonic::transport::Channel;
 
 use zcash_client_backend::data_api::chain::{scan_cached_blocks, validate_chain};
@@ -15,16 +15,16 @@ use zcash_client_backend::proto::compact_formats::CompactBlock;
 
 use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
 
-use crate::db::DbPreparedStatements;
+
 use crate::error::WalletError;
 use crate::trp::TrpWallet;
 use crate::wallet::PostgresWallet;
 use crate::{db, ZcashdConf};
 use futures::StreamExt;
 use postgres::Client;
-use std::cell::RefCell;
-use std::ops::{Range, RangeInclusive, DerefMut};
-use std::rc::Rc;
+
+use std::ops::{Range, DerefMut};
+
 use std::sync::{Mutex, Arc};
 
 const LIGHTNODE_URL: &str = "http://localhost:9067";
@@ -93,6 +93,7 @@ pub async fn connect_lightnode() -> anyhow::Result<CompactTxStreamerClient<Chann
     Ok(client)
 }
 
+#[allow(dead_code)]
 pub fn validate() -> anyhow::Result<(), WalletError> {
     let source = BlockLightwallet {};
     validate_chain(&Network::TestNetwork, &source, None)?;
@@ -120,11 +121,11 @@ pub fn get_scan_range(client: Arc<Mutex<Client>>) -> anyhow::Result<Range<u32>, 
         .activation_height(NetworkUpgrade::Sapling)
         .unwrap()
         .into();
-    let mut from_height = wallet.block_height_extrema().map(|opt| {
+    let from_height = wallet.block_height_extrema().map(|opt| {
         opt.map(|(_, max)| u32::from(max))
             .unwrap_or(sapling_activation_height - 1)
     })? + 1;
-    let r = Runtime::new().unwrap();
+    let _r = Runtime::new().unwrap();
     let tip_height = get_latest_height()? + 1;
     let to_height = tip_height.min(from_height + MAX_CHUNK);
     Ok(from_height..to_height)

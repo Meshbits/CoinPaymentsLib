@@ -1,14 +1,14 @@
 use crate::db::{trp_rewind_to_height, DbPreparedStatements};
 use crate::error::WalletError;
 use crate::trp::zcashdrpc::{get_block, Block, Transaction, ZcashdConf};
-use crate::wallet::scan::get_scan_range;
-use crate::wallet::PostgresWallet;
-use maplit::hashmap;
-use postgres::{Client, Statement};
-use std::cell::RefCell;
+
+
+
+use postgres::{Client};
+
 use std::collections::HashMap;
-use std::ops::{DerefMut, Range, RangeInclusive};
-use std::rc::Rc;
+use std::ops::{DerefMut, Range};
+
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
@@ -154,7 +154,7 @@ impl TrpWallet {
 mod tests {
     use super::*;
     use crate::testconfig::{TEST_DATADIR, TEST_ZCASHD_URL};
-    use crate::wallet::PostgresWallet;
+    
     use crate::CONNECTION_STRING;
     use postgres::NoTls;
 

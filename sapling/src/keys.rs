@@ -7,7 +7,7 @@ use ripemd160::{Ripemd160, Digest};
 use sha2::{Sha256};
 use crate::zams_rpc::Entropy;
 use crate::zams_rpc::entropy::TypeOfEntropy;
-use crate::error::WalletError;
+
 use anyhow::Context;
 use tiny_hderive::bip32::ExtendedPrivKey;
 use secp256k1::{SecretKey, PublicKey, Secp256k1, All};

@@ -1,11 +1,11 @@
-use bytes::Bytes;
+
 use clap::Clap;
 use rand::thread_rng;
 use sapling::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, ZcashdConf, CONNECTION_STRING};
-use sapling::error::WalletError::Postgres;
+
 use postgres::{NoTls, Client};
-use std::cell::RefCell;
-use std::rc::Rc;
+
+
 use sapling::db::{self, DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
 use std::ops::DerefMut;
 use std::time::SystemTime;

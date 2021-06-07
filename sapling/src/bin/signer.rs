@@ -1,13 +1,13 @@
 use std::net::{SocketAddr, Ipv4Addr};
 use tonic::transport::Server;
 use sapling::error::{WalletError};
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow};
 use tonic::{Request, Response, Status};
 use tokio::runtime::Runtime;
-use tokio::task::block_in_place;
+
 use sapling::{zams_rpc as grpc, get_bip39_seed, generate_sapling_keys, generate_transparent_address, sign_tx};
 use sapling::zams_rpc::{Empty, VersionReply, Keys, Entropy, PubKey, pub_key, SignTxRequest, SignedTx};
-use sapling::db::generate_address;
+
 
 struct Signer {}
 impl Signer {

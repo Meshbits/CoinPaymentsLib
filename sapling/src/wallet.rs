@@ -1,16 +1,14 @@
 use crate::error::WalletError;
 use crate::wallet::shielded_output::ShieldedOutput;
-use crate::wallet::transaction::{Account, SpendableNoteWithId};
-use crate::CONNECTION_STRING;
-use anyhow::anyhow;
+use crate::wallet::transaction::{SpendableNoteWithId};
+
 use ff::PrimeField;
 use postgres::types::ToSql;
-use postgres::{Client, GenericClient, NoTls, Row, Statement};
-use std::cell::RefCell;
+use postgres::{Client, Row, Statement};
+
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::ops::DerefMut;
-use std::rc::Rc;
+
 use std::sync::{Arc, Mutex};
 use zcash_client_backend::address::RecipientAddress;
 use zcash_client_backend::data_api::{
@@ -23,7 +21,7 @@ use zcash_client_backend::encoding::{
 use zcash_client_backend::wallet::{AccountId, SpendableNote, WalletTx};
 use zcash_client_backend::DecryptedOutput;
 use zcash_primitives::block::BlockHash;
-use zcash_primitives::consensus;
+
 use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
 use zcash_primitives::constants::testnet::{
     HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
@@ -33,7 +31,8 @@ use zcash_primitives::merkle_tree::{CommitmentTree, IncrementalWitness};
 use zcash_primitives::sapling::{Diversifier, Node, Nullifier, PaymentAddress, Rseed};
 use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
-use zcash_primitives::zip32::{DiversifierIndex, ExtendedFullViewingKey};
+use zcash_primitives::zip32::{ExtendedFullViewingKey};
+use std::ops::DerefMut;
 
 pub mod scan;
 pub mod shielded_output;
@@ -734,6 +733,8 @@ pub fn to_spendable_note(row: &Row) -> Result<SpendableNoteWithId, WalletError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CONNECTION_STRING;
+    use postgres::NoTls;
 
     #[test]
     fn test_upsert() {

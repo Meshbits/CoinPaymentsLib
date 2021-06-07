@@ -1,14 +1,14 @@
-use crate::db::DbPreparedStatements;
-use crate::CONNECTION_STRING;
+
+
 use anyhow::bail;
-use postgres::NoTls;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::cell::RefCell;
+
 use std::fs;
 use std::path::Path;
-use std::rc::Rc;
+
 use crate::testconfig::{TEST_ZCASHD_URL, TEST_DATADIR};
 
 #[derive(Debug, Clone)]
@@ -120,7 +120,8 @@ pub async fn make_json_rpc(
     Ok(res)
 }
 
-pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow::Result<String> {
+#[allow(dead_code)]
+async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow::Result<String> {
     let res = make_json_rpc(client, "getbestblockhash", json!([]), config).await?;
     let hash = res.as_str().unwrap().to_string();
     Ok(hash)
@@ -139,6 +140,7 @@ pub async fn get_block(
     Ok(block)
 }
 
+#[allow(dead_code)]
 pub async fn get_raw_transaction(
     hash: &str,
     client: &Client,
@@ -152,7 +154,6 @@ pub async fn get_raw_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testconfig::*;
 
     #[tokio::test]
     async fn test_get_best_blockchain() {

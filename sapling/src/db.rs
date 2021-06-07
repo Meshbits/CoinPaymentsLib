@@ -3,23 +3,23 @@ use crate::error::WalletError;
 use crate::wallet::scan::get_latest_height;
 use crate::wallet::to_spendable_note;
 use crate::wallet::transaction::{Account, SpendableNoteWithId};
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow};
 use postgres::{Client, GenericClient, Statement};
-use std::cell::RefCell;
+
 use std::cmp;
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
+
+
 use std::time::SystemTime;
 use zcash_client_backend::data_api::wallet::ANCHOR_OFFSET;
 use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_payment_address};
-use zcash_client_backend::wallet::SpendableNote;
+
 use zcash_primitives::consensus::BlockHeight;
 use zcash_primitives::constants::testnet::{
     HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
 };
 use zcash_primitives::zip32::DiversifierIndex;
-use tokio::sync::Mutex;
-use std::sync::Arc;
+
+
 use crate::zams_rpc::*;
 
 pub struct DbPreparedStatements {
