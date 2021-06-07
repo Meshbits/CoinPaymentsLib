@@ -99,7 +99,7 @@ fn main() {
             let mut client = c.lock().unwrap();
             let min_confirmations = min_confirmations.unwrap_or(1);
             let balance = get_balance(client.deref_mut(), account, min_confirmations).unwrap();
-            println!("{}", balance);
+            println!("total = {} available = {}", balance.total, balance.available);
         }
         Command::PrepareTx { from_account, to_address, change_account, amount} => {
             let mut client = c.lock().unwrap();

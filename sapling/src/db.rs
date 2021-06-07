@@ -9,7 +9,7 @@ use postgres::{Client, GenericClient, Statement};
 use std::cmp;
 
 
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 use zcash_client_backend::data_api::wallet::ANCHOR_OFFSET;
 use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_payment_address};
 
@@ -244,41 +244,6 @@ pub fn block_height_extrema<C: GenericClient>(
     Ok(r)
 }
 
-#[derive(Debug)]
-pub struct Payment {
-    pub datetime: SystemTime,
-    pub account: i32,
-    pub sender: String,
-    pub recipient: String,
-    pub change: String,
-    pub amount: i64,
-    pub paid: bool,
-}
-
-pub fn get_payment<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<Payment> {
-    let row = client.query_one(
-        "SELECT datetime, account, sender, recipient,
-        change, amount, paid FROM payments WHERE id_payment = $1",
-        &[&id_payment],
-    )?;
-    let datetime: SystemTime = row.get(0);
-    let account: i32 = row.get(1);
-    let sender: String = row.get(2);
-    let recipient: String = row.get(3);
-    let change: String = row.get(4);
-    let amount: i64 = row.get(5);
-    let paid: bool = row.get(6);
-    Ok(Payment {
-        datetime,
-        account,
-        sender,
-        recipient,
-        change,
-        amount,
-        paid,
-    })
-}
-
 pub fn store_payment<C: GenericClient>(
     client: &mut C,
     datetime: SystemTime,
@@ -356,22 +321,65 @@ pub fn get_balance<C: GenericClient>(
     client: &mut C,
     account: i32,
     min_confirmations: i32,
-) -> crate::Result<i64> {
+) -> crate::Result<Balance> {
     let tip_height = get_latest_height()? as i32;
     let min_height = (tip_height - min_confirmations) as i32;
     let balance = match db::get_account(client, account)? {
         Account::Shielded(_, _) => {
             let row = client.query_one("SELECT SUM(value)::BIGINT FROM received_notes WHERE spent IS NULL AND payment IS NULL AND account = $1 AND height <= $2", &[&account, &min_height])?;
-            let balance: Option<i64> = row.get(0);
-            balance.unwrap_or(0)
+            let available= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
+            let row = client.query_one("SELECT SUM(value)::BIGINT FROM received_notes WHERE spent IS NULL AND account = $1 AND height <= $2", &[&account, &min_height])?;
+            let total = row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
+            Balance {
+                total,
+                available
+            }
         }
         Account::Transparent(address) => {
             let row = client.query_one("SELECT SUM(value)::BIGINT FROM utxos WHERE NOT spent AND payment IS NULL AND address = $1 AND height <= $2", &[&address, &min_height])?;
-            let balance: Option<i64> = row.get(0);
-            balance.unwrap_or(0)
+            let available= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
+            let row = client.query_one("SELECT SUM(value)::BIGINT FROM utxos WHERE NOT spent AND address = $1 AND height <= $2", &[&address, &min_height])?;
+            let total= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
+            Balance {
+                total,
+                available
+            }
         }
     };
     Ok(balance)
+}
+
+pub fn get_payment_info<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<Payment> {
+    let row = client.query_one(
+        "SELECT datetime, account, sender, recipient,
+        change, amount, paid, txid FROM payments WHERE id_payment = $1",
+        &[&id_payment],
+    )?;
+    let datetime: SystemTime = row.get(0);
+    let account: i32 = row.get(1);
+    let sender: String = row.get(2);
+    let recipient: String = row.get(3);
+    let change: String = row.get(4);
+    let amount: i64 = row.get(5);
+    let paid: bool = row.get(6);
+    let txid: Option<String> = row.get(7);
+    let datetime = datetime.duration_since(UNIX_EPOCH).unwrap();
+    Ok(Payment {
+        id: id_payment,
+        datetime: datetime.as_secs() as u32,
+        account,
+        from_address: sender,
+        to_address: recipient,
+        change_address: change,
+        amount: amount as u64,
+        paid,
+        tx_id: txid.unwrap_or(String::new())
+    })
+}
+
+pub fn list_pending_payments<C: GenericClient>(client: &mut C, id_account: i32) -> crate::Result<Vec<i32>> {
+    let rows = client.query("SELECT DISTINCT p.id_payment FROM payments p, received_notes rn WHERE p.id_payment = rn.payment AND rn.account = $1 AND rn.spent IS NULL", &[&id_account])?;
+    Ok(rows.iter().map(|row| row.get::<_, i32>(0)).collect())
 }
 
 #[cfg(test)]
@@ -409,7 +417,6 @@ mod tests {
     #[test]
     fn test_get_payment() {
         let mut client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
-        let p = get_payment(&mut client, 2).unwrap();
-        println!("{:?}", p);
+        get_payment_info(&mut client, 2).unwrap();
     }
 }

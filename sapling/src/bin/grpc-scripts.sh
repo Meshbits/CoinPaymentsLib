@@ -70,3 +70,15 @@ localhost:3002 zams.Signer.SignTx
 cat data/signed.json | grpcurl -import-path proto -proto api.proto -plaintext \
 -d @ \
 localhost:3001 zams.BlockExplorer.BroadcastSignedTx
+
+grpcurl -import-path proto -proto api.proto -plaintext \
+-d '{"account": 1, "min_confirmations": 1}' \
+localhost:3001 zams.BlockExplorer.GetAccountBalance
+
+grpcurl -import-path proto -proto api.proto -plaintext \
+-d '{"id": 1}' \
+localhost:3001 zams.BlockExplorer.GetPaymentInfo
+
+grpcurl -import-path proto -proto api.proto -plaintext \
+-d '{"id": 1}' \
+localhost:3001 zams.BlockExplorer.ListPaymentId

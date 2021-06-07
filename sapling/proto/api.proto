@@ -40,9 +40,13 @@ message ValidateAddressRequest {
   bool tracked = 3;
 }
 
+message AccountId {
+  int32 id = 1;
+}
+
 message GetAccountBalanceRequest {
   int32 account = 1;
-  uint32 minConfirmations = 2;
+  uint32 min_confirmations = 2;
 }
 
 message PrepareUnsignedTxRequest {
@@ -148,13 +152,36 @@ message AccountCursor {
   uint64 diversifier_low = 4;
 }
 
+message Balance {
+  uint64 total = 1;
+  uint64 available = 2;
+}
+
+message Payment {
+  int32 id = 1;
+  uint32 datetime = 2;
+  int32 account = 3;
+  string from_address = 4;
+  string to_address = 5;
+  string change_address = 6;
+  uint64 amount = 7;
+  bool paid = 8;
+  string tx_id = 9;
+}
+
+message PaymentIds {
+  repeated int32 ids = 1;
+}
+
 service BlockExplorer {
   rpc GetVersion(Empty) returns (VersionReply);
 
   rpc ValidateAddress(ValidateAddressRequest) returns (Boolean);
-  rpc GetAccountBalance(GetAccountBalanceRequest) returns (Amount);
+  rpc GetAccountBalance(GetAccountBalanceRequest) returns (Balance);
   rpc PrepareUnsignedTx(PrepareUnsignedTxRequest)  returns (UnsignedTx);
   rpc CancelTx(PaymentId) returns (Empty);
+  rpc ListPendingPayments(AccountId) returns (PaymentIds);
+  rpc GetPaymentInfo(PaymentId) returns (Payment);
   rpc BroadcastSignedTx(SignedTx) returns (TxId);
   rpc EstimateFee(EstimateFeeRequest) returns (Fee);
   rpc GetCurrentHeight(Empty) returns (BlockHeight);

@@ -15,7 +15,7 @@ use std::time::{SystemTime, Duration};
 use rand::rngs::OsRng;
 
 use sapling::zams_rpc as grpc;
-use sapling::zams_rpc::{PubKeyId, AccountCursor, pub_key};
+use sapling::zams_rpc::*;
 use zcash_client_backend::address::RecipientAddress;
 use zcash_primitives::consensus::TestNetwork;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
@@ -66,15 +66,13 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     async fn get_account_balance(
         &self,
         request: Request<grpc::GetAccountBalanceRequest>,
-    ) -> Result<Response<grpc::Amount>, tonic::Status> {
+    ) -> Result<Response<grpc::Balance>, tonic::Status> {
         let request = request.into_inner();
         let balance = block_in_place(|| {
             let mut c = self.client.lock().unwrap();
             get_balance(c.deref_mut(), request.account, request.min_confirmations as i32)
         }).unwrap();
-        Ok(Response::new(grpc::Amount {
-            amount: balance as u64,
-        }))
+        Ok(Response::new(balance))
     }
 
     async fn prepare_unsigned_tx(
@@ -101,6 +99,27 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
             cancel_payment(c.deref_mut(), request.id)
         })?;
         Ok(Response::new(grpc::Empty {}))
+    }
+
+    async fn list_pending_payments(&self, request: Request<AccountId>) -> Result<Response<PaymentIds>, tonic::Status> {
+        let request = request.into_inner();
+        let payment_ids = block_in_place(|| {
+            let mut c = self.client.lock().unwrap();
+            db::list_pending_payments(&mut *c, request.id)
+        })?;
+        let res = PaymentIds {
+            ids: payment_ids
+        };
+        Ok(Response::new(res))
+    }
+
+    async fn get_payment_info(&self, request: Request<PaymentId>) -> Result<Response<Payment>, tonic::Status> {
+        let request = request.into_inner();
+        let payment = block_in_place(|| {
+            let mut c = self.client.lock().unwrap();
+            db::get_payment_info(&mut *c, request.id)
+        })?;
+        Ok(Response::new(payment))
     }
 
     async fn broadcast_signed_tx(
