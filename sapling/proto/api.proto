@@ -1,0 +1,175 @@
+syntax = "proto3";
+package zams;
+
+message Empty {
+}
+
+message VersionReply {
+  string version = 1;
+}
+
+message Boolean {
+  bool value = 1;
+}
+
+message Amount {
+  uint64 amount = 1;
+}
+
+message RawTx {
+  string hex = 1;
+  bool signed = 2;
+}
+
+message TxId {
+  string hash = 1;
+}
+
+message Fee {
+  uint64 amount = 1;
+  bool perkb = 2;
+}
+
+message BlockHeight {
+  uint32 height = 1;
+}
+
+message ValidateAddressRequest {
+  string address = 1;
+  uint64 amount = 2;
+  bool tracked = 3;
+}
+
+message GetAccountBalanceRequest {
+  int32 account = 1;
+  uint32 minConfirmations = 2;
+}
+
+message PrepareUnsignedTxRequest {
+  int32 from_account = 1;
+  string to_address = 2;
+  int32 change_account = 3;
+  uint64 amount = 4;
+  uint64 timestamp = 5;
+}
+
+message EstimateFeeRequest {
+  bool shielded = 1;
+}
+
+message UnsignedTx {
+  int32 id = 1;
+  int32 height = 2;
+  string fvk = 3;
+  repeated UTXO trp_inputs = 4;
+  repeated SaplingTxIn sap_inputs = 5;
+  SaplingTxOut output = 6;
+  string change_address = 7;
+  string change_fvk = 8;
+}
+
+message SaplingTxIn {
+  int32 id = 1;
+  uint64 amount = 2;
+  string address = 3;
+  string diversifier = 4;
+  string rcm = 5;
+  string witness = 6;
+}
+
+message SaplingTxOut {
+  uint64 amount = 1;
+  string address = 2;
+  string ovk = 3;
+}
+
+message UTXO {
+  int32 id = 1;
+  uint64 amount = 2;
+  string tx_hash = 3;
+  int32 output_index = 4;
+  string hex = 5;
+  bool spent = 6;
+}
+
+message SignedTx {
+  int32 id = 1;
+  string raw_tx = 2;
+}
+
+message PaymentId {
+  int32 id = 1;
+}
+
+message SignTxRequest {
+  string secret_key = 1;
+  UnsignedTx unsigned_tx = 2;
+}
+
+message Entropy {
+  oneof type_of_entropy {
+    string seed_phrase = 1;
+    string hex = 2;
+  }
+  string path = 3;
+}
+
+message Keys {
+  PubKey pk = 1;
+  string sk = 2;
+}
+
+enum AddressType {
+  TRANSPARENT = 0;
+  SAPLING = 1;
+}
+
+message PubKey {
+  oneof address_type {
+    string fvk = 1;
+    string address = 2;
+  }
+}
+
+message PubKeyId {
+  int32 id = 1;
+}
+
+message PubKeyCursor {
+  int32 id_fvk = 1;
+  uint64 diversifier_high = 2;
+  uint64 diversifier_low = 3;
+}
+
+message AccountCursor {
+  int32 id_account = 1;
+  string address = 2;
+  uint64 diversifier_high = 3;
+  uint64 diversifier_low = 4;
+}
+
+service BlockExplorer {
+  rpc GetVersion(Empty) returns (VersionReply);
+
+  rpc ValidateAddress(ValidateAddressRequest) returns (Boolean);
+  rpc GetAccountBalance(GetAccountBalanceRequest) returns (Amount);
+  rpc PrepareUnsignedTx(PrepareUnsignedTxRequest)  returns (UnsignedTx);
+  rpc CancelTx(PaymentId) returns (Empty);
+  rpc BroadcastSignedTx(SignedTx) returns (TxId);
+  rpc EstimateFee(EstimateFeeRequest) returns (Fee);
+  rpc GetCurrentHeight(Empty) returns (BlockHeight);
+  rpc Sync(Empty) returns (BlockHeight);
+  rpc Rewind(BlockHeight) returns (Empty);
+
+  rpc ImportPublicKey(PubKey) returns (PubKeyId);
+  rpc NewAccount(PubKeyCursor) returns (AccountCursor);
+}
+
+service Signer {
+  rpc GetVersion(Empty) returns (VersionReply);
+
+  rpc GenerateTransparentKey(Entropy) returns (Keys);
+  rpc GenerateSaplingKey(Entropy) returns (Keys);
+
+  rpc SignTx(SignTxRequest) returns (SignedTx);
+}

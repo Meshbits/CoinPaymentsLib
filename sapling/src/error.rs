@@ -1,5 +1,5 @@
-use zcash_client_backend::data_api;
 use anyhow::anyhow;
+use zcash_client_backend::data_api;
 
 #[derive(Debug)]
 pub enum WalletError {
@@ -47,5 +47,11 @@ impl From<hex::FromHexError> for WalletError {
 impl From<zcash_primitives::transaction::builder::Error> for WalletError {
     fn from(e: zcash_primitives::transaction::builder::Error) -> Self {
         WalletError::TxBuilder(e)
+    }
+}
+
+impl From<WalletError> for tonic::Status {
+    fn from(e: WalletError) -> Self {
+        tonic::Status::internal(format!("{:?}", e))
     }
 }

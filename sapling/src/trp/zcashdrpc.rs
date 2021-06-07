@@ -1,14 +1,15 @@
+use crate::db::DbPreparedStatements;
+use crate::CONNECTION_STRING;
+use anyhow::bail;
+use postgres::NoTls;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use anyhow::bail;
+use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
-use crate::CONNECTION_STRING;
-use postgres::NoTls;
 use std::rc::Rc;
-use std::cell::RefCell;
-use crate::db::DbPreparedStatements;
-use reqwest::Client;
+use crate::testconfig::{TEST_ZCASHD_URL, TEST_DATADIR};
 
 #[derive(Debug, Clone)]
 pub struct ZcashdConf {
@@ -37,7 +38,7 @@ pub struct ScriptPubKey {
 #[allow(non_snake_case)]
 pub struct TransactionOutput {
     pub valueSat: u64,
-    pub scriptPubKey: ScriptPubKey
+    pub scriptPubKey: ScriptPubKey,
 }
 
 //noinspection RsFieldNaming
@@ -62,6 +63,9 @@ pub struct Block {
 }
 
 impl ZcashdConf {
+    pub fn new() -> ZcashdConf {
+        ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap()
+    }
     pub fn parse(url: &str, datadir: &str) -> anyhow::Result<ZcashdConf> {
         let p = Path::new(datadir).join("zams.toml");
         let conf_str = fs::read_to_string(p)?;
@@ -118,13 +122,15 @@ pub async fn make_json_rpc(
 
 pub async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow::Result<String> {
     let res = make_json_rpc(client, "getbestblockhash", json!([]), config).await?;
-    let hash = res
-        .as_str().unwrap()
-        .to_string();
+    let hash = res.as_str().unwrap().to_string();
     Ok(hash)
 }
 
-pub async fn get_block(hash_height: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Block> {
+pub async fn get_block(
+    hash_height: &str,
+    client: &Client,
+    config: &ZcashdConf,
+) -> anyhow::Result<Block> {
     let res = make_json_rpc(client, "getblock", json!([hash_height, 2]), config).await?;
     let mut block: Block = serde_json::from_value(res).unwrap();
     for tx in block.tx.iter_mut() {
@@ -133,7 +139,11 @@ pub async fn get_block(hash_height: &str, client: &Client, config: &ZcashdConf) 
     Ok(block)
 }
 
-pub async fn get_raw_transaction(hash: &str, client: &Client, config: &ZcashdConf) -> anyhow::Result<Transaction> {
+pub async fn get_raw_transaction(
+    hash: &str,
+    client: &Client,
+    config: &ZcashdConf,
+) -> anyhow::Result<Transaction> {
     let res = make_json_rpc(client, "getrawtransaction", json!([hash, 1]), config).await?;
     let tx: Transaction = serde_json::from_value(res)?;
     Ok(tx)
@@ -157,7 +167,9 @@ mod tests {
         let client = reqwest::Client::new();
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let hash = "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c";
-        let res = make_json_rpc(&client, "getblock", json!([hash, 2]), &config).await.unwrap();
+        let res = make_json_rpc(&client, "getblock", json!([hash, 2]), &config)
+            .await
+            .unwrap();
         println!("{}", serde_json::to_string(&res).unwrap());
     }
 
@@ -165,7 +177,13 @@ mod tests {
     async fn test_get_block() {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        get_block("00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c", &client, &config).await.unwrap();
+        get_block(
+            "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c",
+            &client,
+            &config,
+        )
+        .await
+        .unwrap();
         // assert!(get_block("0000000000000000000000000000000000000000000000000000000000000000", &client, &config).await.is_ok());
     }
 
@@ -173,7 +191,13 @@ mod tests {
     async fn test_get_raw_transaction() {
         let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let client = reqwest::Client::new();
-        let tx = get_raw_transaction("a0a8689597f119d02e07930c38d70c411e4b711f5d119f635bae31fe3d38d659", &client, &config).await.unwrap();
+        let tx = get_raw_transaction(
+            "a0a8689597f119d02e07930c38d70c411e4b711f5d119f635bae31fe3d38d659",
+            &client,
+            &config,
+        )
+        .await
+        .unwrap();
         println!("{:?}", tx);
     }
 }

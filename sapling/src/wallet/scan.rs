@@ -5,26 +5,27 @@ use prost::bytes::BytesMut;
 use prost::Message as M;
 use protobuf::Message;
 
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 use tonic::transport::Channel;
 
 use zcash_client_backend::data_api::chain::{scan_cached_blocks, validate_chain};
-use zcash_client_backend::data_api::{BlockSource, WalletWrite, WalletRead};
+use zcash_client_backend::data_api::{BlockSource, WalletRead, WalletWrite};
 
 use zcash_client_backend::proto::compact_formats::CompactBlock;
 
-use zcash_primitives::consensus::{BlockHeight, Network, Parameters, NetworkUpgrade};
+use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
 
-use crate::error::WalletError;
-use crate::wallet::PostgresWallet;
-use futures::StreamExt;
-use std::ops::{RangeInclusive, Range};
-use crate::trp::{TrpWallet};
-use crate::{ZcashdConf, db};
-use postgres::Client;
 use crate::db::DbPreparedStatements;
-use std::rc::Rc;
+use crate::error::WalletError;
+use crate::trp::TrpWallet;
+use crate::wallet::PostgresWallet;
+use crate::{db, ZcashdConf};
+use futures::StreamExt;
+use postgres::Client;
 use std::cell::RefCell;
+use std::ops::{Range, RangeInclusive, DerefMut};
+use std::rc::Rc;
+use std::sync::{Mutex, Arc};
 
 const LIGHTNODE_URL: &str = "http://localhost:9067";
 const MAX_CHUNK: u32 = 1000;
@@ -46,10 +47,9 @@ impl BlockSource for BlockLightwallet {
         let from_height = u32::from(from_height) + 1;
         let r = Runtime::new().unwrap();
         let tip_height = get_latest_height()?;
-        let to_height =
-            from_height
-                .saturating_add(limit.unwrap_or(u32::MAX) - 1)
-                .min(tip_height);
+        let to_height = from_height
+            .saturating_add(limit.unwrap_or(u32::MAX) - 1)
+            .min(tip_height);
 
         let blocks = r.block_on(async {
             let mut client = connect_lightnode().await.unwrap();
@@ -67,12 +67,15 @@ impl BlockSource for BlockLightwallet {
                 .await
                 .unwrap()
                 .into_inner();
-            let blocks: Vec<CompactBlock> = blocks.map(|cb| {
-                let cb = cb.unwrap();
-                let mut cb_bytes = BytesMut::with_capacity(cb.encoded_len());
-                cb.encode_raw(&mut cb_bytes);
-                CompactBlock::parse_from_bytes(&cb_bytes).unwrap()
-            }).collect().await;
+            let blocks: Vec<CompactBlock> = blocks
+                .map(|cb| {
+                    let cb = cb.unwrap();
+                    let mut cb_bytes = BytesMut::with_capacity(cb.encoded_len());
+                    cb.encode_raw(&mut cb_bytes);
+                    CompactBlock::parse_from_bytes(&cb_bytes).unwrap()
+                })
+                .collect()
+                .await;
             blocks
         });
 
@@ -99,7 +102,7 @@ pub fn validate() -> anyhow::Result<(), WalletError> {
 
 pub fn get_latest_height() -> crate::Result<u32> {
     let r = Runtime::new().unwrap();
-    let tip_height = r.block_on(async {
+    r.block_on(async {
         let mut client = connect_lightnode().await?;
         let tip_height = client
             .get_latest_block(ChainSpec {})
@@ -108,13 +111,15 @@ pub fn get_latest_height() -> crate::Result<u32> {
             .into_inner()
             .height as u32;
         Ok::<_, WalletError>(tip_height)
-    })?;
-    Ok(tip_height)
+    })
 }
 
-pub fn get_scan_range() -> anyhow::Result<Range<u32>, WalletError> {
-    let wallet = PostgresWallet::new().unwrap();
-    let sapling_activation_height: u32 = Network::TestNetwork.activation_height(NetworkUpgrade::Sapling).unwrap().into();
+pub fn get_scan_range(client: Arc<Mutex<Client>>) -> anyhow::Result<Range<u32>, WalletError> {
+    let wallet = PostgresWallet::new(client.clone()).unwrap();
+    let sapling_activation_height: u32 = Network::TestNetwork
+        .activation_height(NetworkUpgrade::Sapling)
+        .unwrap()
+        .into();
     let mut from_height = wallet.block_height_extrema().map(|opt| {
         opt.map(|(_, max)| u32::from(max))
             .unwrap_or(sapling_activation_height - 1)
@@ -125,42 +130,44 @@ pub fn get_scan_range() -> anyhow::Result<Range<u32>, WalletError> {
     Ok(from_height..to_height)
 }
 
-pub fn scan_sapling() -> anyhow::Result<(), WalletError> {
+pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletError> {
     let source = BlockLightwallet {};
-    let mut data = PostgresWallet::new()?;
+    let mut data = PostgresWallet::new(client)?;
     scan_cached_blocks(&Network::TestNetwork, &source, &mut data, Some(MAX_CHUNK))?;
     Ok(())
 }
 
-pub fn scan_chain(c: Rc<RefCell<Client>>, config: &ZcashdConf) -> anyhow::Result<(), WalletError> {
-    let mut trp_wallet = TrpWallet::new(c)?;
-    loop {
-        let range = get_scan_range()?;
+pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> anyhow::Result<u32, WalletError> {
+    let mut trp_wallet = TrpWallet::new(client.clone())?;
+    let end_height = loop {
+        let range = get_scan_range(client.clone())?;
         println!("{:?}", range);
-        let len = range.end - range.start;
-        if len == 0 { break }
-        scan_sapling()?;
+        if range.end <= range.start {
+            break range.end;
+        }
+        scan_sapling(client.clone())?;
         trp_wallet.scan_transparent(range, config)?;
-    }
-    Ok(())
+    };
+    Ok(end_height)
 }
 
-pub fn load_checkpoint(client: &mut Client, height: u32) -> Result<(), WalletError> {
+pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32) -> Result<(), WalletError> {
     let r = Runtime::new().unwrap();
     let tree_state = r.block_on(async {
         let mut client = connect_lightnode().await?;
-        Ok::<_, WalletError>(client
-            .get_tree_state(BlockId {
-                height: height as u64,
-                hash: vec![],
-            })
-            .await?
-            .into_inner())
+        Ok::<_, WalletError>(
+            client
+                .get_tree_state(BlockId {
+                    height: height as u64,
+                    hash: vec![],
+                })
+                .await?
+                .into_inner(),
+        )
     })?;
-    let data = PostgresWallet::new()?;
 
     db::load_checkpoint(
-        client,
+        client.lock().unwrap().deref_mut(),
         tree_state.height as u32,
         &hex::decode(tree_state.hash).map_err(|_| anyhow::anyhow!("Not hex"))?,
         tree_state.time as i32,
@@ -169,10 +176,10 @@ pub fn load_checkpoint(client: &mut Client, height: u32) -> Result<(), WalletErr
     Ok(())
 }
 
-pub fn rewind_to_height(height: u32) -> Result<(), WalletError> {
-    let mut data = PostgresWallet::new()?;
+pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32) -> Result<(), WalletError> {
+    let mut data = PostgresWallet::new(client.clone())?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
-    let trp_wallet = TrpWallet::new(data.connection.clone())?;
+    let trp_wallet = TrpWallet::new(client.clone())?;
     trp_wallet.rewind_to_height(height)?;
     Ok(())
 }

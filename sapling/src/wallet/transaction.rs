@@ -21,60 +21,32 @@ use zcash_primitives::sapling::{Diversifier, Node, Rseed};
 use zcash_primitives::transaction::builder::Builder;
 use zcash_primitives::transaction::components::{Amount, OutPoint, TxOut};
 
+use crate::db;
+use crate::db::DbPreparedStatements;
 use crate::wallet::scan::connect_lightnode;
 use bytes::Bytes;
+use itertools::Itertools;
+use postgres::{Client, GenericClient};
 use rand::prelude::SliceRandom;
 use rand::RngCore;
 use serde_json::Value;
+use std::alloc::System;
+use std::ops::DerefMut;
 use std::str::FromStr;
+use std::time::SystemTime;
 use tokio::runtime::Runtime;
 use zcash_client_backend::wallet::SpendableNote;
 use zcash_primitives::consensus;
 use zcash_primitives::legacy::Script;
 use zcash_primitives::sapling::keys::OutgoingViewingKey;
-use zcash_proofs::prover::LocalTxProver;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
-use crate::db;
-use postgres::{GenericClient, Client};
-use crate::db::DbPreparedStatements;
-use std::ops::DerefMut;
-use std::alloc::System;
-use std::time::SystemTime;
-use itertools::Itertools;
+use zcash_proofs::prover::LocalTxProver;
+use crate::zams_rpc::*;
 
 #[derive(Debug, Clone)]
 pub enum Account {
     Transparent(String),
     Shielded(String, String),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UnsignedTx {
-    pub id: i32,
-    pub height: i64,
-    pub fvk: String,
-    pub trp_inputs: Vec<UTXO>,
-    pub sap_inputs: Vec<SaplingTxIn>,
-    pub output: Option<SaplingTxOut>,
-    pub change_address: String,
-    pub change_fvk: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SaplingTxIn {
-    pub id: i32,
-    pub amount: u64,
-    pub address: String,
-    pub diversifier: String,
-    pub rcm: String,
-    pub witness: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SaplingTxOut {
-    pub amount: u64,
-    pub address: String,
-    pub ovk: Option<String>,
 }
 
 pub struct SpendableNoteWithId {
@@ -89,7 +61,9 @@ trait NoteLike<TxIn> {
 }
 
 impl NoteLike<SaplingTxIn> for SpendableNoteWithId {
-    fn id(&self) -> i32 { self.id }
+    fn id(&self) -> i32 {
+        self.id
+    }
     fn note_value(&self) -> Amount {
         self.note.note_value
     }
@@ -116,30 +90,16 @@ impl NoteLike<SaplingTxIn> for SpendableNoteWithId {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct UTXO {
-    pub id: i32,
-    pub amount: u64,
-    pub tx_hash: String,
-    pub output_index: i32,
-    pub hex: String,
-    pub spent: bool,
-}
-
-impl NoteLike<UTXO> for UTXO {
-    fn id(&self) -> i32 { self.id }
+impl NoteLike<Utxo> for Utxo {
+    fn id(&self) -> i32 {
+        self.id
+    }
     fn note_value(&self) -> Amount {
         Amount::from_i64(self.amount as i64).unwrap()
     }
-    fn to_tx_input(&self, _id: i32, _from_address: &str) -> Result<UTXO, WalletError> {
+    fn to_tx_input(&self, _id: i32, _from_address: &str) -> Result<Utxo, WalletError> {
         Ok(self.clone())
     }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SignedTx {
-    pub id: i32,
-    pub raw_tx: String,
 }
 
 fn select_notes<TxIn, N: NoteLike<TxIn>, R: RngCore>(
@@ -200,7 +160,7 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
 
     let mut tx = UnsignedTx {
         id: 0,
-        height: i64::from(height),
+        height: u32::from(height) as i32,
         fvk: String::new(),
         trp_inputs: Vec::new(),
         sap_inputs: Vec::new(),
@@ -222,8 +182,12 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
                     .unwrap()
                     .unwrap();
             ovk = Some(extfvk.fvk.ovk);
-            let mut spendable_notes =
-                db::get_spendable_notes_by_address(c,statements, &from_address, u32::from(anchor_height))?;
+            let mut spendable_notes = db::get_spendable_notes_by_address(
+                c,
+                statements,
+                &from_address,
+                u32::from(anchor_height),
+            )?;
             let mut tx_ins = select_notes(&from_address, &mut spendable_notes, target_value, rng)?;
             tx_ins.iter().for_each(|txin| notes.push(txin.id));
             tx.sap_inputs.append(&mut tx_ins);
@@ -245,11 +209,20 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
     tx.output = Some(SaplingTxOut {
         address: to_address.to_string(),
         amount: u64::from(amount),
-        ovk: ovk.map(|ovk| hex::encode(ovk.0)),
+        ovk: ovk.map(|ovk| hex::encode(ovk.0)).unwrap_or(String::new()),
     });
 
-    let id_payment = db::store_payment(c, datetime, from_account, &from_address, &to_address,
-    &change_address, i64::from(amount), &notes, &utxos)?;
+    let id_payment = db::store_payment(
+        c,
+        datetime,
+        from_account,
+        &from_address,
+        &to_address,
+        &change_address,
+        i64::from(amount),
+        &notes,
+        &utxos,
+    )?;
     tx.id = id_payment;
 
     Ok(tx)
@@ -303,11 +276,14 @@ pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> crate::Result<Sig
     let output = unsigned_tx.output.unwrap();
     let recipient = RecipientAddress::decode(&Network::TestNetwork, &output.address)
         .ok_or_else(|| WalletError::Error(anyhow!("Invalid recipient address")))?;
-    let ovk = output.ovk.map(|o| {
-        let mut ovk = [0u8; 32];
-        hex::decode_to_slice(&o, &mut ovk).unwrap();
-        OutgoingViewingKey(ovk)
-    });
+    let ovk = match output.ovk.as_str() {
+        "" => None,
+        o => {
+            let mut ovk = [0u8; 32];
+            hex::decode_to_slice(o, &mut ovk).unwrap();
+            Some(OutgoingViewingKey(ovk))
+        }
+    };
     match recipient {
         RecipientAddress::Shielded(pa) => {
             builder.add_sapling_output(ovk, pa, Amount::from_u64(output.amount).unwrap(), None)?;
@@ -373,16 +349,17 @@ pub fn broadcast_tx(c: &mut Client, signed_tx: &SignedTx) -> crate::Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::thread_rng;
-    use postgres::{Client, NoTls};
     use crate::CONNECTION_STRING;
+    use postgres::{Client, NoTls};
+    use rand::thread_rng;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
-    fn setup() -> (Rc<RefCell<Client>>, DbPreparedStatements) {
-        let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
-        let c = Rc::new(RefCell::new(connection));
-        let statements = DbPreparedStatements::prepare(c.clone()).unwrap();
+    fn setup() -> (Arc<Mutex<Client>>, DbPreparedStatements) {
+        let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let mut c = Arc::new(Mutex::new(client));
+        let statements = DbPreparedStatements::prepare(c.lock().unwrap().deref_mut()).unwrap();
         (c.clone(), statements)
     }
 
@@ -394,7 +371,7 @@ mod tests {
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             20_000_000,
-                            c.borrow_mut().deref_mut(), &statements,
+                            c.lock().unwrap().deref_mut(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }
@@ -407,7 +384,7 @@ mod tests {
                             "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
                             1,
                             500_000,
-                            c.borrow_mut().deref_mut(), &statements,
+                            c.lock().unwrap().deref_mut(), &statements,
                             &mut rng).unwrap();
         println!("{}", serde_json::to_string(&tx).unwrap());
     }

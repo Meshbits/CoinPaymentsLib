@@ -2,7 +2,7 @@ use crate::db;
 use crate::error::WalletError;
 use crate::wallet::scan::get_latest_height;
 use crate::wallet::to_spendable_note;
-use crate::wallet::transaction::{Account, SpendableNoteWithId, UTXO};
+use crate::wallet::transaction::{Account, SpendableNoteWithId};
 use anyhow::{anyhow, Context};
 use postgres::{Client, GenericClient, Statement};
 use std::cell::RefCell;
@@ -18,6 +18,9 @@ use zcash_primitives::constants::testnet::{
     HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
 };
 use zcash_primitives::zip32::DiversifierIndex;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use crate::zams_rpc::*;
 
 pub struct DbPreparedStatements {
     pub stmt_select_sapling_notes: Statement,
@@ -26,8 +29,7 @@ pub struct DbPreparedStatements {
 }
 
 impl DbPreparedStatements {
-    pub fn prepare(client: Rc<RefCell<Client>>) -> crate::Result<DbPreparedStatements> {
-        let mut c = client.borrow_mut();
+    pub fn prepare(c: &mut Client) -> crate::Result<DbPreparedStatements> {
         Ok(DbPreparedStatements {
             stmt_select_sapling_notes: c.prepare(
                 "SELECT id_note, diversifier, value, rcm, witness
@@ -96,11 +98,11 @@ pub fn import_address<C: GenericClient>(c: &mut C, address: &str) -> crate::Resu
     Ok(account)
 }
 
-pub fn generate_keys<C: GenericClient>(
+pub fn generate_address<C: GenericClient>(
     c: &mut C,
     id_fvk: i32,
     diversifier_index: u128,
-) -> std::result::Result<(String, u128), WalletError> {
+) -> std::result::Result<(i32, String, u128), WalletError> {
     let row = c.query_one("SELECT extfvk FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
     let key: String = row.get(0);
     let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &key)
@@ -127,7 +129,7 @@ pub fn generate_keys<C: GenericClient>(
     )?;
     let account: i32 = row.get(0);
 
-    Ok((address, diversifier_index_out))
+    Ok((account, address, diversifier_index_out))
 }
 
 pub fn get_spendable_notes_by_address<C: GenericClient>(
@@ -149,7 +151,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
     c: &mut C,
     s: &DbPreparedStatements,
     address: &str,
-) -> crate::Result<Vec<UTXO>> {
+) -> crate::Result<Vec<Utxo>> {
     let rows = c
         .query(&s.stmt_select_trp_notes, &[&address])
         .map_err(WalletError::Postgres)?;
@@ -161,7 +163,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
             let output_index: i32 = row.get(2);
             let value: i64 = row.get(3);
             let script_hex: Vec<u8> = row.get(4);
-            UTXO {
+            Utxo {
                 id,
                 amount: value as u64,
                 tx_hash: hex::encode(&tx_hash),
