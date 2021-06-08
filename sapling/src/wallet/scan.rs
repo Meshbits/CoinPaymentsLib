@@ -19,13 +19,14 @@ use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Paramete
 use crate::error::WalletError;
 use crate::trp::TrpWallet;
 use crate::wallet::PostgresWallet;
-use crate::{db, ZcashdConf};
+use crate::db;
 use futures::StreamExt;
 use postgres::Client;
 
 use std::ops::{Range, DerefMut};
 
 use std::sync::{Mutex, Arc};
+use crate::config::ZamsConfig;
 
 const LIGHTNODE_URL: &str = "http://localhost:9067";
 const MAX_CHUNK: u32 = 1000;
@@ -162,8 +163,8 @@ pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletErro
     Ok(())
 }
 
-pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> anyhow::Result<u32, WalletError> {
-    let mut trp_wallet = TrpWallet::new(client.clone())?;
+pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Result<u32, WalletError> {
+    let mut trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
     let range = loop {
         let range = get_scan_range(client.clone())?;
         println!("{:?}", &range);
@@ -172,11 +173,11 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> anyhow::Re
         }
         let scan_result = {
             scan_sapling(client.clone())?;
-            trp_wallet.scan_transparent(range.clone(), config)?;
+            trp_wallet.scan_transparent(range.clone())?;
             Ok(())
         };
         match scan_result {
-            Err(WalletError::Reorg) => rewind_to_height(client.clone(), range.start - 10)?,
+            Err(WalletError::Reorg) => rewind_to_height(client.clone(), range.start - 10, config)?,
             _ => scan_result?,
         }
     };
@@ -209,10 +210,10 @@ pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32) -> Result<(), Wa
     Ok(())
 }
 
-pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32) -> Result<(), WalletError> {
+pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
     let mut data = PostgresWallet::new(client.clone())?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
-    let trp_wallet = TrpWallet::new(client.clone())?;
+    let trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
     trp_wallet.rewind_to_height(height)?;
     Ok(())
 }

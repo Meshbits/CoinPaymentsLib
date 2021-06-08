@@ -374,6 +374,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "configparser"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7201ee416d124d589a820111ba755930df8b75855321a9a1b87312a0597ec8f"
+
+[[package]]
 name = "const_fn"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1973,6 +1979,7 @@ dependencies = [
  "bech32",
  "bytes",
  "clap",
+ "configparser",
  "ff",
  "flexi_logger",
  "futures 0.3.15",

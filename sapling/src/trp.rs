@@ -1,6 +1,6 @@
 use crate::db::{trp_rewind_to_height, DbPreparedStatements};
 use crate::error::WalletError;
-use crate::trp::zcashdrpc::{get_block, Block, Transaction, ZcashdConf};
+use crate::trp::zcashdrpc::{get_block, Block, Transaction};
 
 
 
@@ -12,16 +12,17 @@ use std::ops::{DerefMut, Range};
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use crate::db;
+use crate::config::ZamsConfig;
 
 pub mod zcashdrpc;
 
 pub struct BlockSource {
-    config: ZcashdConf,
+    config: ZamsConfig,
     client: Arc<Mutex<Client>>,
 }
 
 impl BlockSource {
-    pub fn new(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> BlockSource {
+    pub fn new(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> BlockSource {
         BlockSource {
             config: config.clone(),
             client,
@@ -56,16 +57,18 @@ impl BlockSource {
 }
 
 pub struct TrpWallet {
+    config: ZamsConfig,
     client: Arc<Mutex<Client>>,
     statements: DbPreparedStatements,
     addresses: HashMap<String, i32>,
 }
 
 impl TrpWallet {
-    pub fn new(c: Arc<Mutex<Client>>) -> crate::Result<TrpWallet> {
+    pub fn new(c: Arc<Mutex<Client>>, config: ZamsConfig) -> crate::Result<TrpWallet> {
         let mut client = c.lock().unwrap();
         let statements = DbPreparedStatements::prepare(&mut client)?;
         Ok(TrpWallet {
+            config,
             client: c.clone(),
             statements,
             addresses: HashMap::new(),
@@ -133,10 +136,9 @@ impl TrpWallet {
 
     pub fn scan_range(
         &mut self,
-        range: Range<u32>,
-        config: &ZcashdConf,
+        range: Range<u32>
     ) -> Result<(), WalletError> {
-        let source = BlockSource::new(self.client.clone(), &config);
+        let source = BlockSource::new(self.client.clone(), &self.config);
         source.with_blocks(range, |block| {
             let mut c = self.client.lock().unwrap();
             for tx in block.tx.iter() {
@@ -157,11 +159,10 @@ impl TrpWallet {
 
     pub fn scan_transparent(
         &mut self,
-        range: Range<u32>,
-        config: &ZcashdConf,
+        range: Range<u32>
     ) -> Result<(), WalletError> {
         self.load_transparent_addresses_from_db()?;
-        self.scan_range(range, &config)?;
+        self.scan_range(range)?;
         Ok(())
     }
 }
@@ -169,18 +170,17 @@ impl TrpWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testconfig::{TEST_DATADIR, TEST_ZCASHD_URL};
-    
-    use crate::CONNECTION_STRING;
+
     use postgres::NoTls;
+    use crate::config::ZamsConfig;
 
     #[test]
     fn test_with_block() {
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
-        let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let client = Client::connect(&config.connection_string, NoTls).unwrap();
         let client = Arc::new(Mutex::new(client));
-        let mut wallet = TrpWallet::new(client).unwrap();
+        let mut wallet = TrpWallet::new(client, config.clone()).unwrap();
         wallet.load_transparent_addresses_from_db().unwrap();
-        wallet.scan_range(1_432_000..1_432_138, &config).unwrap();
+        wallet.scan_range(1_432_000..1_432_138).unwrap();
     }
 }

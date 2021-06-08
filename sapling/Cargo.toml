@@ -45,6 +45,7 @@ tiny-hderive = "0.3.0"
 tiny-bip39 = "0.8"
 ripemd160 = "0.9.1"
 sha2 = "0.9.5"
+configparser = "2.1.0"
 
 [dependencies.zcash_client_backend]
 git = "https://github.com/zcash/librustzcash.git"

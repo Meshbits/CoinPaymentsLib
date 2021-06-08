@@ -731,12 +731,13 @@ pub fn to_spendable_note(row: &Row) -> Result<SpendableNoteWithId, WalletError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CONNECTION_STRING;
     use postgres::NoTls;
+    use crate::ZamsConfig;
 
     #[test]
     fn test_upsert() {
-        let client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let client = Client::connect(&config.connection_string, NoTls).unwrap();
         let client = Arc::new(Mutex::new(client));
         let w = PostgresWallet::new(client.clone()).unwrap();
         let mut client = client.lock().unwrap();

@@ -1,22 +1,10 @@
-
-
 use anyhow::bail;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use std::fs;
-use std::path::Path;
-
-use crate::testconfig::{TEST_ZCASHD_URL, TEST_DATADIR};
-
-#[derive(Debug, Clone)]
-pub struct ZcashdConf {
-    url: String,
-    rpc_username: String,
-    rpc_password: String,
-}
+use crate::config::ZamsConfig;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -62,25 +50,25 @@ pub struct Block {
     pub tx: Vec<Transaction>,
 }
 
-impl ZcashdConf {
-    pub fn new() -> ZcashdConf {
-        ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap()
-    }
-    pub fn parse(url: &str, datadir: &str) -> anyhow::Result<ZcashdConf> {
-        let p = Path::new(datadir).join("zams.toml");
-        let conf_str = fs::read_to_string(p)?;
-        let conf: toml::Value = toml::from_str(&conf_str)?;
-        let table = conf.as_table().unwrap();
-        let rpc_username = table.get("rpcuser").unwrap().as_str().unwrap();
-        let rpc_password = table.get("rpcpassword").unwrap().as_str().unwrap();
-
-        Ok(ZcashdConf {
-            url: url.to_owned(),
-            rpc_username: rpc_username.to_owned(),
-            rpc_password: rpc_password.to_owned(),
-        })
-    }
-}
+// impl ZcashdConf {
+//     pub fn new() -> ZcashdConf {
+//         ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap()
+//     }
+//     pub fn parse(url: &str, datadir: &str) -> anyhow::Result<ZcashdConf> {
+//         let p = Path::new(datadir).join("zams.toml");
+//         let conf_str = fs::read_to_string(p)?;
+//         let conf: toml::Value = toml::from_str(&conf_str)?;
+//         let table = conf.as_table().unwrap();
+//         let rpc_username = table.get("rpcuser").unwrap().as_str().unwrap();
+//         let rpc_password = table.get("rpcpassword").unwrap().as_str().unwrap();
+//
+//         Ok(ZcashdConf {
+//             url: url.to_owned(),
+//             rpc_username: rpc_username.to_owned(),
+//             rpc_password: rpc_password.to_owned(),
+//         })
+//     }
+// }
 
 #[derive(Serialize, Deserialize)]
 struct JsonRpcBody<'a> {
@@ -94,7 +82,7 @@ pub async fn make_json_rpc(
     client: &reqwest::Client,
     method: &str,
     params: Value,
-    config: &ZcashdConf,
+    config: &ZamsConfig,
 ) -> anyhow::Result<Value> {
     let body = JsonRpcBody {
         jsonrpc: &"1.0",
@@ -104,9 +92,9 @@ pub async fn make_json_rpc(
     };
     let body = serde_json::to_string(&body)?;
     let res = client
-        .post(&config.url)
+        .post(&config.zcashd)
         .header("Content-Type", "application/json")
-        .basic_auth(&config.rpc_username, Some(&config.rpc_password))
+        .basic_auth(&config.rpc_user, Some(&config.rpc_password))
         .body(body)
         .send()
         .await?;
@@ -121,7 +109,7 @@ pub async fn make_json_rpc(
 }
 
 #[allow(dead_code)]
-async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow::Result<String> {
+async fn get_best_blockhash(client: &Client, config: &ZamsConfig) -> anyhow::Result<String> {
     let res = make_json_rpc(client, "getbestblockhash", json!([]), config).await?;
     let hash = res.as_str().unwrap().to_string();
     Ok(hash)
@@ -130,7 +118,7 @@ async fn get_best_blockhash(client: &Client, config: &ZcashdConf) -> anyhow::Res
 pub async fn get_block(
     hash_height: &str,
     client: &Client,
-    config: &ZcashdConf,
+    config: &ZamsConfig,
 ) -> anyhow::Result<Block> {
     let res = make_json_rpc(client, "getblock", json!([hash_height, 2]), config).await?;
     let mut block: Block = serde_json::from_value(res).unwrap();
@@ -144,7 +132,7 @@ pub async fn get_block(
 pub async fn get_raw_transaction(
     hash: &str,
     client: &Client,
-    config: &ZcashdConf,
+    config: &ZamsConfig,
 ) -> anyhow::Result<Transaction> {
     let res = make_json_rpc(client, "getrawtransaction", json!([hash, 1]), config).await?;
     let tx: Transaction = serde_json::from_value(res)?;
@@ -154,10 +142,11 @@ pub async fn get_raw_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ZamsConfig;
 
     #[tokio::test]
     async fn test_get_best_blockchain() {
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let config = ZamsConfig::default();
         let client = reqwest::Client::new();
         let hash = get_best_blockhash(&client, &config).await;
         assert!(hash.is_ok());
@@ -165,8 +154,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_make_json_rpc() {
+        let config = ZamsConfig::default();
         let client = reqwest::Client::new();
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
         let hash = "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c";
         let res = make_json_rpc(&client, "getblock", json!([hash, 2]), &config)
             .await
@@ -176,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_block() {
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let config = ZamsConfig::default();
         let client = reqwest::Client::new();
         get_block(
             "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c",
@@ -190,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_raw_transaction() {
-        let config = ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap();
+        let config = ZamsConfig::default();
         let client = reqwest::Client::new();
         let tx = get_raw_transaction(
             "a0a8689597f119d02e07930c38d70c411e4b711f5d119f635bae31fe3d38d659",

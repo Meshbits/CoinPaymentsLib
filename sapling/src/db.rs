@@ -388,12 +388,13 @@ pub fn list_pending_payments<C: GenericClient>(client: &mut C, id_account: i32) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CONNECTION_STRING;
     use postgres::{Client, NoTls};
+    use crate::ZamsConfig;
 
     #[test]
     fn test_payment() {
-        let mut client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let mut client = Client::connect(&config.connection_string, NoTls).unwrap();
         let now = SystemTime::now();
         store_payment(&mut client, now, 1,
         "ztestsapling10xueewxz53j8kp5sdd79uk5ffsgshukkauyxduscu86zjp778xyavmqftz87pcs2zexzxyclmwn",
@@ -407,19 +408,22 @@ mod tests {
 
     #[test]
     fn test_mark_paid() {
-        let mut client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let mut client = Client::connect(&config.connection_string, NoTls).unwrap();
         mark_paid(&mut client, 2, "").unwrap();
     }
 
     #[test]
     fn test_cancel_paid() {
-        let mut client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let mut client = Client::connect(&config.connection_string, NoTls).unwrap();
         cancel_payment(&mut client, 2).unwrap();
     }
 
     #[test]
     fn test_get_payment() {
-        let mut client = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let mut client = Client::connect(&config.connection_string, NoTls).unwrap();
         get_payment_info(&mut client, 2).unwrap();
     }
 }

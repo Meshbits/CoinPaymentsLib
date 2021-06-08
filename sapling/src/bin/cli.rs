@@ -1,15 +1,13 @@
 
 use clap::Clap;
 use rand::thread_rng;
-use sapling::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, ZcashdConf, CONNECTION_STRING};
-
+use sapling::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, import_fvk};
 use postgres::{NoTls, Client};
-
-
-use sapling::db::{self, DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
+use sapling::{DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
 use std::ops::DerefMut;
 use std::time::SystemTime;
 use std::sync::{Mutex, Arc};
+use sapling::config::ZamsConfig;
 
 #[derive(Clap)]
 struct CommandArgs {
@@ -59,8 +57,8 @@ enum Command {
 }
 
 fn main() {
-    let config = ZcashdConf::parse("http://127.0.0.1:18232", "/home/hanh/zcash-test").unwrap();
-    let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+    let config = ZamsConfig::default();
+    let connection = Client::connect(&config.connection_string, NoTls).unwrap();
     let c = Arc::new(Mutex::new(connection));
     let statements = DbPreparedStatements::prepare(c.lock().unwrap().deref_mut()).unwrap();
     let mut rng = thread_rng();
@@ -72,14 +70,14 @@ fn main() {
             load_checkpoint(c.clone(), height).unwrap();
         }
         Command::Rewind { height } => {
-            rewind_to_height(c.clone(), height).unwrap();
+            rewind_to_height(c.clone(), height, &config).unwrap();
         }
         Command::Scan => {
             scan_chain(c.clone(), &config).unwrap();
         }
         Command::ImportFVK { fvk } => {
             let mut client = c.lock().unwrap();
-            let id_fvk = db::import_fvk(client.deref_mut(), &fvk).unwrap();
+            let id_fvk = import_fvk(client.deref_mut(), &fvk).unwrap();
             println!("{}", id_fvk);
         }
         Command::ImportAddress { address } => {

@@ -3,9 +3,9 @@ use tonic::transport::Server;
 use sapling::error::{WalletError};
 
 use tonic::{Request, Response};
-use sapling::db::{get_balance, DbPreparedStatements, generate_address, import_address, cancel_payment};
+use sapling::{DbPreparedStatements, get_balance, generate_address, import_address, cancel_payment, list_pending_payments, get_payment_info, import_fvk};
 use postgres::{Client, NoTls};
-use sapling::{CONNECTION_STRING, prepare_tx, db, scan_chain, ZcashdConf, get_latest_height, broadcast_tx};
+use sapling::{prepare_tx, scan_chain, get_latest_height, broadcast_tx, ZamsConfig};
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
@@ -21,15 +21,15 @@ use zcash_primitives::consensus::TestNetwork;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
 
 struct ZAMS {
-    config: ZcashdConf,
+    config: ZamsConfig,
     client: Arc<Mutex<Client>>,
     statements: DbPreparedStatements,
 }
 
 impl ZAMS {
     pub fn new() -> ZAMS {
-        let config = ZcashdConf::new();
-        let connection = Client::connect(CONNECTION_STRING, NoTls).unwrap();
+        let config = ZamsConfig::default();
+        let connection = Client::connect(&config.connection_string, NoTls).unwrap();
         let client = Arc::new(Mutex::new(connection));
         let statements = DbPreparedStatements::prepare(client.lock().unwrap().deref_mut()).unwrap();
         ZAMS {
@@ -105,7 +105,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         let request = request.into_inner();
         let payment_ids = block_in_place(|| {
             let mut c = self.client.lock().unwrap();
-            db::list_pending_payments(&mut *c, request.id)
+            list_pending_payments(&mut *c, request.id)
         })?;
         let res = PaymentIds {
             ids: payment_ids
@@ -117,7 +117,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         let request = request.into_inner();
         let payment = block_in_place(|| {
             let mut c = self.client.lock().unwrap();
-            db::get_payment_info(&mut *c, request.id)
+            get_payment_info(&mut *c, request.id)
         })?;
         Ok(Response::new(payment))
     }
@@ -190,7 +190,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
                     Ok(id_account)
                 }
                 Some(pub_key::AddressType::Fvk(fvk)) => {
-                    let id_fvk = db::import_fvk(client.deref_mut(), &fvk).unwrap();
+                    let id_fvk = import_fvk(client.deref_mut(), &fvk).unwrap();
                     Ok(id_fvk)
                 }
                 _ => return Err(WalletError::Error(anyhow::anyhow!("Invalid address type")))
