@@ -1,17 +1,18 @@
 use zcash_primitives::zip32::{ExtendedSpendingKey, ExtendedFullViewingKey, ChildIndex};
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_extended_full_viewing_key, encode_transparent_address};
-use zcash_primitives::constants::testnet::{HRP_SAPLING_EXTENDED_SPENDING_KEY, HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, B58_PUBKEY_ADDRESS_PREFIX, B58_SCRIPT_ADDRESS_PREFIX};
 use tiny_hderive::bip44::DerivationPath;
 use bip39::{Language, Mnemonic, Seed};
 use ripemd160::{Ripemd160, Digest};
 use sha2::{Sha256};
 use crate::zams_rpc::Entropy;
 use crate::zams_rpc::entropy::TypeOfEntropy;
+use crate::constants::NETWORK;
 
 use anyhow::Context;
 use tiny_hderive::bip32::ExtendedPrivKey;
 use secp256k1::{SecretKey, PublicKey, Secp256k1, All};
 use zcash_primitives::legacy::TransparentAddress;
+use zcash_primitives::consensus::Parameters;
 
 pub fn get_bip39_seed(entropy: Entropy) -> crate::Result<Seed> {
     let mnemonic = match entropy.type_of_entropy.context("Missing entropy")? {
@@ -33,7 +34,7 @@ pub fn generate_transparent_address(seed: Seed, path: &str) -> (String, String) 
     let pub_key = pub_key.serialize();
     let pub_key = Ripemd160::digest(&Sha256::digest(&pub_key));
     let address = TransparentAddress::PublicKey(pub_key.into());
-    let address = encode_transparent_address(&B58_PUBKEY_ADDRESS_PREFIX, &B58_SCRIPT_ADDRESS_PREFIX, &address);
+    let address = encode_transparent_address(&NETWORK.b58_pubkey_address_prefix(), &NETWORK.b58_script_address_prefix(), &address);
     let seckey = secret_key.to_string();
     (seckey, address)
 }
@@ -53,7 +54,7 @@ pub fn generate_sapling_keys(seed: Seed, path: &str) -> (String, String) {
     }).collect();
     let extsk = ExtendedSpendingKey::from_path(&master, &path);
     let fvk = ExtendedFullViewingKey::from(&extsk);
-    let sk = encode_extended_spending_key(HRP_SAPLING_EXTENDED_SPENDING_KEY, &extsk);
-    let fvk = encode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &fvk);
+    let sk = encode_extended_spending_key(NETWORK.hrp_sapling_extended_spending_key(), &extsk);
+    let fvk = encode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), &fvk);
     (sk, fvk)
 }

@@ -22,3 +22,15 @@ pub use crate::trp::zcashdrpc::ZcashdConf;
 pub use crate::wallet::scan::{load_checkpoint, rewind_to_height, scan_chain, get_latest_height};
 pub use crate::wallet::transaction::{broadcast_tx, prepare_tx, sign_tx};
 pub use crate::keys::*;
+
+#[cfg(not(feature = "mainnet"))]
+pub mod constants {
+    use zcash_primitives::consensus::Network::{self, TestNetwork};
+    pub const NETWORK: Network = TestNetwork;
+}
+
+#[cfg(feature = "mainnet")]
+pub mod constants {
+    use zcash_primitives::consensus::Network::{self, MainNetwork};
+    pub const NETWORK: Network = MainNetwork;
+}

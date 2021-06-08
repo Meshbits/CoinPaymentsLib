@@ -7,16 +7,13 @@ use anyhow::{anyhow};
 use postgres::{Client, GenericClient, Statement};
 
 use std::cmp;
-
+use crate::constants::NETWORK;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use zcash_client_backend::data_api::wallet::ANCHOR_OFFSET;
 use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_payment_address};
 
-use zcash_primitives::consensus::BlockHeight;
-use zcash_primitives::constants::testnet::{
-    HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
-};
+use zcash_primitives::consensus::{BlockHeight, Parameters};
 use zcash_primitives::zip32::DiversifierIndex;
 
 
@@ -105,7 +102,7 @@ pub fn generate_address<C: GenericClient>(
 ) -> std::result::Result<(i32, String, u128), WalletError> {
     let row = c.query_one("SELECT extfvk FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
     let key: String = row.get(0);
-    let fvk = decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &key)
+    let fvk = decode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), &key)
         .map_err(WalletError::Bech32)?
         .ok_or(WalletError::IncorrectHrpExtFvk)?;
     let mut di = DiversifierIndex::new();
@@ -115,7 +112,7 @@ pub fn generate_address<C: GenericClient>(
     let (di, pa) = fvk
         .address(di)
         .map_err(|_| anyhow!("Invalid diversifier"))?;
-    let address = encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &pa);
+    let address = encode_payment_address(NETWORK.hrp_sapling_payment_address(), &pa);
     let mut di_bytes = [0u8; 16];
     di_bytes[..11].copy_from_slice(&di.0);
     let diversifier_index_out = u128::from_le_bytes(di_bytes);
@@ -153,8 +150,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
     address: &str,
 ) -> crate::Result<Vec<Utxo>> {
     let rows = c
-        .query(&s.stmt_select_trp_notes, &[&address])
-        .map_err(WalletError::Postgres)?;
+        .query(&s.stmt_select_trp_notes, &[&address])?;
     let notes: Vec<_> = rows
         .iter()
         .map(|row| {
@@ -177,7 +173,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
 }
 
 pub fn get_account<C: GenericClient>(c: &mut C, id: i32) -> crate::Result<Account> {
-    let row = c.query_opt("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id]).map_err(WalletError::Postgres)?;
+    let row = c.query_opt("SELECT a.address, f.extfvk FROM accounts a LEFT JOIN fvks f ON a.fvk = f.id_fvk WHERE a.account = $1", &[&id])?;
     match row {
         Some(row) => {
             let address: String = row.get(0);

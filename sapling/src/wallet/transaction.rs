@@ -10,11 +10,7 @@ use zcash_client_backend::address::RecipientAddress;
 use zcash_client_backend::encoding::{
     decode_extended_full_viewing_key, decode_extended_spending_key, decode_payment_address,
 };
-use zcash_primitives::consensus::{BlockHeight, BranchId, Network};
-use zcash_primitives::constants::testnet::{
-    HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_EXTENDED_SPENDING_KEY,
-    HRP_SAPLING_PAYMENT_ADDRESS,
-};
+use zcash_primitives::consensus::{BlockHeight, BranchId, Network, Parameters};
 use zcash_primitives::merkle_tree::IncrementalWitness;
 use zcash_primitives::sapling::{Diversifier, Node, Rseed};
 use zcash_primitives::transaction::builder::Builder;
@@ -23,7 +19,7 @@ use zcash_primitives::transaction::components::{Amount, OutPoint, TxOut};
 use crate::db;
 use crate::db::DbPreparedStatements;
 use crate::wallet::scan::connect_lightnode;
-
+use crate::constants::NETWORK;
 
 use postgres::{Client, GenericClient};
 use rand::prelude::SliceRandom;
@@ -177,7 +173,7 @@ pub fn prepare_tx<C: GenericClient, R: RngCore>(
         Account::Shielded(from_address, extfvk) => {
             tx.fvk = extfvk.clone();
             let extfvk =
-                decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, &extfvk)
+                decode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), &extfvk)
                     .unwrap()
                     .unwrap();
             ovk = Some(extfvk.fvk.ovk);
@@ -251,13 +247,13 @@ pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> crate::Result<Sig
     }
 
     for input in unsigned_tx.sap_inputs.iter() {
-        let extsk = decode_extended_spending_key(HRP_SAPLING_EXTENDED_SPENDING_KEY, spending_key)
+        let extsk = decode_extended_spending_key(NETWORK.hrp_sapling_extended_spending_key(), spending_key)
             .map_err(WalletError::Bech32)?
             .unwrap();
         let mut d = [0u8; 11];
         hex::decode_to_slice(&input.diversifier, &mut d)?;
         let diversifier = Diversifier(d);
-        let from = decode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &input.address)
+        let from = decode_payment_address(NETWORK.hrp_sapling_payment_address(), &input.address)
             .map_err(WalletError::Bech32)?
             .unwrap();
         let mut rcm = [0u8; 32];
@@ -304,7 +300,7 @@ pub fn sign_tx(spending_key: &str, unsigned_tx: UnsignedTx) -> crate::Result<Sig
         }
     };
     let change_fvk = decode_extended_full_viewing_key(
-        HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY,
+        NETWORK.hrp_sapling_extended_full_viewing_key(),
         &unsigned_tx.change_fvk,
     )
     .map_err(WalletError::Bech32)?

@@ -8,6 +8,7 @@ use postgres::{Client, Row, Statement};
 
 use std::collections::HashMap;
 use std::convert::TryInto;
+use crate::constants::NETWORK;
 
 use std::sync::{Arc, Mutex};
 use zcash_client_backend::address::RecipientAddress;
@@ -23,9 +24,6 @@ use zcash_client_backend::DecryptedOutput;
 use zcash_primitives::block::BlockHash;
 
 use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
-use zcash_primitives::constants::testnet::{
-    HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, HRP_SAPLING_PAYMENT_ADDRESS,
-};
 use zcash_primitives::memo::{Memo, MemoBytes};
 use zcash_primitives::merkle_tree::{CommitmentTree, IncrementalWitness};
 use zcash_primitives::sapling::{Diversifier, Node, Nullifier, PaymentAddress, Rseed};
@@ -219,7 +217,7 @@ impl<'a> WalletDbTransaction<'a> {
         let tx = tx_ref;
         let output_index = output.index() as i32;
         let nf_bytes = output.nullifier().map(|nf| nf.0.to_vec());
-        let address = encode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, output.to());
+        let address = encode_payment_address(NETWORK.hrp_sapling_payment_address(), output.to());
         let row = self.transaction.query_one(
             "SELECT account FROM accounts WHERE address = $1 AND fvk = $2",
             &[&address, &account],
@@ -373,7 +371,7 @@ impl WalletRead for PostgresWallet {
         )?;
         let row = row.map(|row| {
             let addr: String = row.get(0);
-            decode_payment_address(HRP_SAPLING_PAYMENT_ADDRESS, &addr).map_err(WalletError::Bech32)
+            decode_payment_address(NETWORK.hrp_sapling_payment_address(), &addr).map_err(WalletError::Bech32)
         });
         row.transpose().map(|r| r.flatten())
     }
@@ -392,7 +390,7 @@ impl WalletRead for PostgresWallet {
             let id_fvk: i32 = row.get(0);
             let account_id = AccountId(id_fvk as u32);
             let efvkr =
-                decode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, row.get(1))
+                decode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), row.get(1))
                     .map_err(WalletError::Bech32)?;
 
             res.insert(account_id, efvkr.ok_or(WalletError::IncorrectHrpExtFvk)?);
@@ -410,7 +408,7 @@ impl WalletRead for PostgresWallet {
         let statement =
             client.prepare("SELECT * FROM accounts WHERE account = $1 AND extfvk = $2")?;
         let extfvk =
-            encode_extended_full_viewing_key(HRP_SAPLING_EXTENDED_FULL_VIEWING_KEY, extfvk);
+            encode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), extfvk);
 
         let res = client.query(&statement, &[&account.0, &extfvk])?;
         Ok(!res.is_empty())
