@@ -32,7 +32,6 @@ pub struct TransactionOutput {
     pub scriptPubKey: ScriptPubKey,
 }
 
-//noinspection RsFieldNaming
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct Transaction {
@@ -40,6 +39,27 @@ pub struct Transaction {
     pub height: Option<u32>,
     pub vin: Vec<TransactionInput>,
     pub vout: Vec<TransactionOutput>,
+    pub vShieldedSpend: Vec<ShieldedSpend>,
+    pub vShieldedOutput: Vec<ShieldedOutput>
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ShieldedSpend {
+    pub cv: String,
+    pub anchor: String,
+    pub nullifier: String,
+    pub rk: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ShieldedOutput {
+    pub cv: String,
+    pub cmu: String,
+    pub ephemeralKey: String,
+    pub encCiphertext: String,
+    pub outCiphertext: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,27 +74,34 @@ pub struct Block {
 }
 
 impl Block {
+    const COMPACT_NOTE_SIZE: usize = 52;
+
     pub fn to_compact(&self) -> crate::Result<CompactBlock> {
         let mut cb = CompactBlock::new();
         cb.prevHash = hex::decode(self.previousblockhash.as_ref().unwrap())?;
-        cb.prevHash.reverse();
         cb.hash = hex::decode(&self.hash)?;
-        cb.hash.reverse();
         cb.height = self.height as u64;
-        // TODO: cb.header
+        // TODO: do we need cb.header ?
         cb.time = self.time as u32;
         for (i, tx) in self.tx.iter().enumerate() {
             let mut ctx = CompactTx::new();
             ctx.index = i as u64;
             ctx.hash = hex::decode(&tx.txid)?;
-            ctx.hash.reverse();
             ctx.fee = 0;
-            for (i, txin) in tx.vin.iter().enumerate() {
+            for tx_spend in tx.vShieldedSpend.iter() {
                 let mut spend = CompactSpend::new();
+                spend.nf = hex::decode(&tx_spend.nullifier)?;
+                spend.nf.reverse();
                 ctx.spends.push(spend);
             }
-            for (i, txout) in tx.vout.iter().enumerate() {
+            for tx_out in tx.vShieldedOutput.iter() {
                 let mut output = CompactOutput::new();
+                output.cmu = hex::decode(&tx_out.cmu)?;
+                output.cmu.reverse();
+                output.epk = hex::decode(&tx_out.ephemeralKey)?;
+                output.epk.reverse();
+                output.ciphertext = hex::decode(&tx_out.encCiphertext)?;
+                output.ciphertext.truncate(Block::COMPACT_NOTE_SIZE);
                 ctx.outputs.push(output);
             }
             cb.vtx.push(ctx);
@@ -111,14 +138,13 @@ pub async fn make_json_rpc(
         .body(body)
         .send()
         .await?;
-    let res = res.error_for_status()?;
     let res: Map<String, Value> = res.json().await?;
-    let res = match res.get("error") {
-        Some(Value::Null) => res.get("result").unwrap().clone(),
-        Some(Value::String(s)) => bail!(s.clone()),
-        _ => bail!("unknown error"),
-    };
-    Ok(res)
+    if let Some(error) = res.get("error") {
+        if let Some(message) = error.get("message") {
+            bail!(message.clone())
+        }
+    }
+    Ok(res["result"].clone())
 }
 
 pub fn get_latest_height(config: &ZamsConfig) -> crate::Result<u32> {
@@ -157,7 +183,8 @@ pub fn send_raw_tx(raw_tx: &str, config: &ZamsConfig) -> crate::Result<String> {
     let r = Runtime::new().unwrap();
     let txid = r.block_on(async {
         let client = reqwest::Client::new();
-        let res = make_json_rpc(&client, "sendrawtransaction", json!([raw_tx]), config).await?;
+        let res = make_json_rpc(&client, "sendrawtransaction", json!([&raw_tx]), config).await?;
+        println!("{:?}", res);
         let txid = res.as_str().unwrap().to_string();
         Ok::<_, WalletError>(txid)
     })?;
@@ -209,7 +236,7 @@ mod tests {
         let config = ZamsConfig::default();
         let client = reqwest::Client::new();
         get_block(
-            "00030a5790262b189b710903915059257c241a9d21a6dba8c88c3beac3e02b9c",
+            "002d1b37e1a0ecc0a90c735cae30f42db0f5384d95c96215d302bc9da8788428",
             &client,
             &config,
         )

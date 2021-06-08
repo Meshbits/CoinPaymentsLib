@@ -42,8 +42,7 @@ impl BlockSource {
                 db::get_block_by_height(&mut *client, height - 1)?
             };
             match (prev_block_hash, block.previousblockhash.as_ref()) {
-                (Some(mut ph), Some(ph2)) => {
-                    ph.reverse(); // zcashd returns hashes in LSB
+                (Some(ph), Some(ph2)) => {
                     if hex::encode(ph) != *ph2 {
                         return Err(WalletError::Reorg)
                     }
