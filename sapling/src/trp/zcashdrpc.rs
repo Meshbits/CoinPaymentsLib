@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::config::ZamsConfig;
+use zcash_client_backend::proto::compact_formats::{CompactBlock, CompactTx, CompactSpend, CompactOutput};
+use tokio::runtime::Runtime;
+use crate::WalletError;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -50,25 +53,35 @@ pub struct Block {
     pub tx: Vec<Transaction>,
 }
 
-// impl ZcashdConf {
-//     pub fn new() -> ZcashdConf {
-//         ZcashdConf::parse(TEST_ZCASHD_URL, TEST_DATADIR).unwrap()
-//     }
-//     pub fn parse(url: &str, datadir: &str) -> anyhow::Result<ZcashdConf> {
-//         let p = Path::new(datadir).join("zams.toml");
-//         let conf_str = fs::read_to_string(p)?;
-//         let conf: toml::Value = toml::from_str(&conf_str)?;
-//         let table = conf.as_table().unwrap();
-//         let rpc_username = table.get("rpcuser").unwrap().as_str().unwrap();
-//         let rpc_password = table.get("rpcpassword").unwrap().as_str().unwrap();
-//
-//         Ok(ZcashdConf {
-//             url: url.to_owned(),
-//             rpc_username: rpc_username.to_owned(),
-//             rpc_password: rpc_password.to_owned(),
-//         })
-//     }
-// }
+impl Block {
+    pub fn to_compact(&self) -> crate::Result<CompactBlock> {
+        let mut cb = CompactBlock::new();
+        cb.prevHash = hex::decode(self.previousblockhash.as_ref().unwrap())?;
+        cb.prevHash.reverse();
+        cb.hash = hex::decode(&self.hash)?;
+        cb.hash.reverse();
+        cb.height = self.height as u64;
+        // TODO: cb.header
+        cb.time = self.time as u32;
+        for (i, tx) in self.tx.iter().enumerate() {
+            let mut ctx = CompactTx::new();
+            ctx.index = i as u64;
+            ctx.hash = hex::decode(&tx.txid)?;
+            ctx.hash.reverse();
+            ctx.fee = 0;
+            for (i, txin) in tx.vin.iter().enumerate() {
+                let mut spend = CompactSpend::new();
+                ctx.spends.push(spend);
+            }
+            for (i, txout) in tx.vout.iter().enumerate() {
+                let mut output = CompactOutput::new();
+                ctx.outputs.push(output);
+            }
+            cb.vtx.push(ctx);
+        }
+        Ok(cb)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct JsonRpcBody<'a> {
@@ -108,11 +121,47 @@ pub async fn make_json_rpc(
     Ok(res)
 }
 
-#[allow(dead_code)]
-async fn get_best_blockhash(client: &Client, config: &ZamsConfig) -> anyhow::Result<String> {
-    let res = make_json_rpc(client, "getbestblockhash", json!([]), config).await?;
-    let hash = res.as_str().unwrap().to_string();
-    Ok(hash)
+pub fn get_latest_height(config: &ZamsConfig) -> crate::Result<u32> {
+    let r = Runtime::new().unwrap();
+    let height = r.block_on(async {
+        let client = reqwest::Client::new();
+        let res = make_json_rpc(&client, "getblockcount", json!([]), config).await?;
+        let height = res.as_u64().unwrap() as u32;
+        Ok::<_, WalletError>(height)
+    })?;
+    Ok(height)
+}
+
+pub struct TreeState {
+    pub hash: String,
+    pub tree: String,
+}
+
+pub fn get_tree_state(height: u32, config: &ZamsConfig) -> crate::Result<TreeState> {
+    let r = Runtime::new().unwrap();
+    let tree_state = r.block_on(async {
+        let client = reqwest::Client::new();
+        let height = format!("{}", height);
+        let res = make_json_rpc(&client, "z_gettreestate", json!([&height]), config).await?;
+        let hash = res[&"hash"].as_str().unwrap().to_string();
+        let tree = res[&"sapling"][&"commitments"][&"finalState"].as_str().unwrap().to_string();
+        Ok::<_, WalletError>(TreeState {
+            hash,
+            tree,
+        })
+    })?;
+    Ok(tree_state)
+}
+
+pub fn send_raw_tx(raw_tx: &str, config: &ZamsConfig) -> crate::Result<String> {
+    let r = Runtime::new().unwrap();
+    let txid = r.block_on(async {
+        let client = reqwest::Client::new();
+        let res = make_json_rpc(&client, "sendrawtransaction", json!([raw_tx]), config).await?;
+        let txid = res.as_str().unwrap().to_string();
+        Ok::<_, WalletError>(txid)
+    })?;
+    Ok(txid)
 }
 
 pub async fn get_block(
@@ -143,14 +192,6 @@ pub async fn get_raw_transaction(
 mod tests {
     use super::*;
     use crate::config::ZamsConfig;
-
-    #[tokio::test]
-    async fn test_get_best_blockchain() {
-        let config = ZamsConfig::default();
-        let client = reqwest::Client::new();
-        let hash = get_best_blockhash(&client, &config).await;
-        assert!(hash.is_ok());
-    }
 
     #[tokio::test]
     async fn test_make_json_rpc() {

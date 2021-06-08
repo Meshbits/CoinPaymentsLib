@@ -6,7 +6,6 @@ use ripemd160::{Ripemd160, Digest};
 use sha2::{Sha256};
 use crate::zams_rpc::Entropy;
 use crate::zams_rpc::entropy::TypeOfEntropy;
-use crate::constants::NETWORK;
 
 use anyhow::Context;
 use tiny_hderive::bip32::ExtendedPrivKey;
@@ -26,7 +25,7 @@ pub fn get_bip39_seed(entropy: Entropy) -> crate::Result<Seed> {
     Ok(Seed::new(&mnemonic, ""))
 }
 
-pub fn generate_transparent_address(seed: Seed, path: &str) -> (String, String) {
+pub fn generate_transparent_address<P: Parameters>(network: &P, seed: Seed, path: &str) -> (String, String) {
     let secp = Secp256k1::<All>::new();
     let ext = ExtendedPrivKey::derive(&seed.as_bytes(), path).unwrap();
     let secret_key = SecretKey::from_slice(&ext.secret()).unwrap();
@@ -34,12 +33,12 @@ pub fn generate_transparent_address(seed: Seed, path: &str) -> (String, String) 
     let pub_key = pub_key.serialize();
     let pub_key = Ripemd160::digest(&Sha256::digest(&pub_key));
     let address = TransparentAddress::PublicKey(pub_key.into());
-    let address = encode_transparent_address(&NETWORK.b58_pubkey_address_prefix(), &NETWORK.b58_script_address_prefix(), &address);
+    let address = encode_transparent_address(&network.b58_pubkey_address_prefix(), &network.b58_script_address_prefix(), &address);
     let seckey = secret_key.to_string();
     (seckey, address)
 }
 
-pub fn generate_sapling_keys(seed: Seed, path: &str) -> (String, String) {
+pub fn generate_sapling_keys<P: Parameters>(network: &P, seed: Seed, path: &str) -> (String, String) {
     let master = ExtendedSpendingKey::master(seed.as_bytes());
     let path: DerivationPath = path.parse().unwrap();
     let path: Vec<ChildIndex> = path.iter().map(|child| {
@@ -54,7 +53,7 @@ pub fn generate_sapling_keys(seed: Seed, path: &str) -> (String, String) {
     }).collect();
     let extsk = ExtendedSpendingKey::from_path(&master, &path);
     let fvk = ExtendedFullViewingKey::from(&extsk);
-    let sk = encode_extended_spending_key(NETWORK.hrp_sapling_extended_spending_key(), &extsk);
-    let fvk = encode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), &fvk);
+    let sk = encode_extended_spending_key(network.hrp_sapling_extended_spending_key(), &extsk);
+    let fvk = encode_extended_full_viewing_key(network.hrp_sapling_extended_full_viewing_key(), &fvk);
     (sk, fvk)
 }

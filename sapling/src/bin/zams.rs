@@ -3,10 +3,9 @@ use tonic::transport::Server;
 use sapling::error::{WalletError};
 
 use tonic::{Request, Response};
-use sapling::{DbPreparedStatements, get_balance, generate_address, import_address, cancel_payment, list_pending_payments, get_payment_info, import_fvk};
+use sapling::{DbPreparedStatements, get_balance, generate_address, import_address, cancel_payment, list_pending_payments, get_payment_info, import_fvk, get_latest_height};
 use postgres::{Client, NoTls};
-use sapling::{prepare_tx, scan_chain, get_latest_height, broadcast_tx, ZamsConfig};
-use std::ops::DerefMut;
+use sapling::{prepare_tx, scan_chain, broadcast_tx, ZamsConfig};
 use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
@@ -31,7 +30,10 @@ impl ZAMS {
         let config = ZamsConfig::default();
         let connection = Client::connect(&config.connection_string, NoTls).unwrap();
         let client = Arc::new(Mutex::new(connection));
-        let statements = DbPreparedStatements::prepare(client.lock().unwrap().deref_mut()).unwrap();
+        let statements = {
+            let mut c = client.lock().unwrap();
+            DbPreparedStatements::prepare(&mut *c).unwrap()
+        };
         ZAMS {
             config,
             client,
@@ -69,8 +71,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     ) -> Result<Response<grpc::Balance>, tonic::Status> {
         let request = request.into_inner();
         let balance = block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
-            get_balance(c.deref_mut(), request.account, request.min_confirmations as i32)
+            let mut client = self.client.lock().unwrap();
+            get_balance(&mut *client, request.account, request.min_confirmations as i32, &self.config)
         }).unwrap();
         Ok(Response::new(balance))
     }
@@ -81,10 +83,10 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     ) -> Result<Response<grpc::UnsignedTx>, tonic::Status> {
         let request = request.into_inner();
         let unsigned_tx = block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
+            let mut client = self.client.lock().unwrap();
             let datetime = SystemTime::UNIX_EPOCH + Duration::from_secs(request.timestamp);
-            prepare_tx(datetime, request.from_account, &request.to_address, request.change_account, request.amount as i64,
-            c.deref_mut(), &self.statements, &mut OsRng)
+            prepare_tx(self.config.network, datetime, request.from_account, &request.to_address, request.change_account, request.amount as i64,
+            &mut *client, &self.statements, &mut OsRng)
         })?;
         Ok(Response::new(unsigned_tx))
     }
@@ -95,8 +97,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     ) -> Result<Response<grpc::Empty>, tonic::Status> {
         let request = request.into_inner();
         block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
-            cancel_payment(c.deref_mut(), request.id)
+            let mut client = self.client.lock().unwrap();
+            cancel_payment(&mut *client, request.id)
         })?;
         Ok(Response::new(grpc::Empty {}))
     }
@@ -104,8 +106,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     async fn list_pending_payments(&self, request: Request<AccountId>) -> Result<Response<PaymentIds>, tonic::Status> {
         let request = request.into_inner();
         let payment_ids = block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
-            list_pending_payments(&mut *c, request.id)
+            let mut client = self.client.lock().unwrap();
+            list_pending_payments(&mut *client, request.id)
         })?;
         let res = PaymentIds {
             ids: payment_ids
@@ -116,8 +118,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     async fn get_payment_info(&self, request: Request<PaymentId>) -> Result<Response<Payment>, tonic::Status> {
         let request = request.into_inner();
         let payment = block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
-            get_payment_info(&mut *c, request.id)
+            let mut client = self.client.lock().unwrap();
+            get_payment_info(&mut *client, request.id)
         })?;
         Ok(Response::new(payment))
     }
@@ -128,8 +130,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
     ) -> Result<Response<grpc::TxId>, tonic::Status> {
         let request = request.into_inner();
         let tx_id = block_in_place(|| {
-            let mut c = self.client.lock().unwrap();
-            broadcast_tx(c.deref_mut(), &request)
+            let mut client = self.client.lock().unwrap();
+            broadcast_tx(&mut *client, &request, &self.config)
         })?;
         let rep = grpc::TxId {
             hash: tx_id
@@ -152,7 +154,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         &self,
         _request: Request<grpc::Empty>,
     ) -> Result<Response<grpc::BlockHeight>, tonic::Status> {
-        let end_height = block_in_place(|| get_latest_height())?;
+        let end_height = block_in_place(|| get_latest_height(&self.config))?;
         let height = grpc::BlockHeight {
             height: end_height,
         };
@@ -186,11 +188,11 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
             let mut client = self.client.lock().unwrap();
             match request.address_type {
                 Some(pub_key::AddressType::Address(address)) => {
-                    let id_account = import_address(client.deref_mut(), &address).unwrap();
+                    let id_account = import_address(&mut *client, &address).unwrap();
                     Ok(id_account)
                 }
                 Some(pub_key::AddressType::Fvk(fvk)) => {
-                    let id_fvk = import_fvk(client.deref_mut(), &fvk).unwrap();
+                    let id_fvk = import_fvk(&mut *client, &fvk).unwrap();
                     Ok(id_fvk)
                 }
                 _ => return Err(WalletError::Error(anyhow::anyhow!("Invalid address type")))
@@ -210,7 +212,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         let diversifier_index = (request.diversifier_high as u128) << 64 | request.diversifier_low as u128;
         let account = block_in_place(|| {
             let mut client = self.client.lock().unwrap();
-            let (id_account, address, di) = generate_address(client.deref_mut(), request.id_fvk, diversifier_index).unwrap();
+            let (id_account, address, di) = generate_address(self.config.network, &mut *client, request.id_fvk, diversifier_index).unwrap();
             AccountCursor {
                 id_account,
                 address,
@@ -223,7 +225,8 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
 }
 
 fn main() {
-    let port = 3001;
+    let config = ZamsConfig::default();
+    let port = config.port;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
     let exporer = ZAMS::new();
     let r = Runtime::new().unwrap();

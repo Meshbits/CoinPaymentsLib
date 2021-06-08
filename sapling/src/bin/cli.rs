@@ -67,7 +67,7 @@ fn main() {
     let cmd = opts.cmd;
     match cmd {
         Command::LoadCheckpoint { height } => {
-            load_checkpoint(c.clone(), height).unwrap();
+            load_checkpoint(c.clone(), height, &config).unwrap();
         }
         Command::Rewind { height } => {
             rewind_to_height(c.clone(), height, &config).unwrap();
@@ -77,12 +77,12 @@ fn main() {
         }
         Command::ImportFVK { fvk } => {
             let mut client = c.lock().unwrap();
-            let id_fvk = import_fvk(client.deref_mut(), &fvk).unwrap();
+            let id_fvk = import_fvk(&mut *client, &fvk).unwrap();
             println!("{}", id_fvk);
         }
         Command::ImportAddress { address } => {
             let mut client = c.lock().unwrap();
-            let id_account = import_address(client.deref_mut(), &address).unwrap();
+            let id_account = import_address(&mut *client, &address).unwrap();
             println!("{}", id_account);
         }
         Command::GenerateNewAddress {
@@ -90,34 +90,34 @@ fn main() {
             diversifier_index,
         } => {
             let mut client = c.lock().unwrap();
-            let (id_account, addr, di) = generate_address(client.deref_mut(), id_fvk, diversifier_index).unwrap();
+            let (id_account, addr, di) = generate_address(config.network, &mut *client, id_fvk, diversifier_index).unwrap();
             println!("{} {} {}", id_account, &addr, di);
         }
         Command::GetBalance { account, min_confirmations } => {
             let mut client = c.lock().unwrap();
             let min_confirmations = min_confirmations.unwrap_or(1);
-            let balance = get_balance(client.deref_mut(), account, min_confirmations).unwrap();
+            let balance = get_balance(&mut *client, account, min_confirmations, &config).unwrap();
             println!("total = {} available = {}", balance.total, balance.available);
         }
         Command::PrepareTx { from_account, to_address, change_account, amount} => {
             let mut client = c.lock().unwrap();
             let tx =
-                prepare_tx(SystemTime::now(), from_account, &to_address, change_account, amount, client.deref_mut(), &statements, &mut rng).unwrap();
+                prepare_tx(config.network, SystemTime::now(), from_account, &to_address, change_account, amount, &mut *client, &statements, &mut rng).unwrap();
             println!("{}", serde_json::to_string(&tx).unwrap());
         }
         Command::CancelTx { id } => {
             let mut client = c.lock().unwrap();
-            cancel_payment(client.deref_mut(), id).unwrap();
+            cancel_payment(&mut *client, id).unwrap();
         }
         Command::SignTx { sk, unsigned_tx } => {
             let unsigned_tx = serde_json::from_str(&unsigned_tx).unwrap();
-            let signed_tx = sign_tx(&sk, unsigned_tx).unwrap();
+            let signed_tx = sign_tx(config.network, &sk, unsigned_tx).unwrap();
             println!("{}", serde_json::to_string(&signed_tx).unwrap());
         }
         Command::BroadcastTx { signed_tx } => {
             let mut client = c.lock().unwrap();
             let signed_tx = serde_json::from_str(&signed_tx).unwrap();
-            let txid = broadcast_tx(client.deref_mut(), &signed_tx).unwrap();
+            let txid = broadcast_tx(&mut *client, &signed_tx, &config).unwrap();
             println!("{}", txid);
         }
     }

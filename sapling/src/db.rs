@@ -1,13 +1,11 @@
-use crate::db;
+use crate::{db, ZamsConfig};
 use crate::error::WalletError;
-use crate::wallet::scan::get_latest_height;
 use crate::wallet::to_spendable_note;
 use crate::wallet::transaction::{Account, SpendableNoteWithId};
 use anyhow::{anyhow};
 use postgres::{Client, GenericClient, Statement};
 
 use std::cmp;
-use crate::constants::NETWORK;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use zcash_client_backend::data_api::wallet::ANCHOR_OFFSET;
@@ -18,6 +16,7 @@ use zcash_primitives::zip32::DiversifierIndex;
 
 
 use crate::zams_rpc::*;
+use crate::trp::zcashdrpc::get_latest_height;
 
 pub struct DbPreparedStatements {
     pub stmt_select_sapling_notes: Statement,
@@ -95,14 +94,15 @@ pub fn import_address<C: GenericClient>(c: &mut C, address: &str) -> crate::Resu
     Ok(account)
 }
 
-pub fn generate_address<C: GenericClient>(
+pub fn generate_address<P: Parameters, C: GenericClient>(
+    network: &P,
     c: &mut C,
     id_fvk: i32,
     diversifier_index: u128,
 ) -> std::result::Result<(i32, String, u128), WalletError> {
     let row = c.query_one("SELECT extfvk FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
     let key: String = row.get(0);
-    let fvk = decode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), &key)
+    let fvk = decode_extended_full_viewing_key(network.hrp_sapling_extended_full_viewing_key(), &key)
         .map_err(WalletError::Bech32)?
         .ok_or(WalletError::IncorrectHrpExtFvk)?;
     let mut di = DiversifierIndex::new();
@@ -112,7 +112,7 @@ pub fn generate_address<C: GenericClient>(
     let (di, pa) = fvk
         .address(di)
         .map_err(|_| anyhow!("Invalid diversifier"))?;
-    let address = encode_payment_address(NETWORK.hrp_sapling_payment_address(), &pa);
+    let address = encode_payment_address(network.hrp_sapling_payment_address(), &pa);
     let mut di_bytes = [0u8; 16];
     di_bytes[..11].copy_from_slice(&di.0);
     let diversifier_index_out = u128::from_le_bytes(di_bytes);
@@ -324,8 +324,9 @@ pub fn get_balance<C: GenericClient>(
     client: &mut C,
     account: i32,
     min_confirmations: i32,
+    config: &ZamsConfig
 ) -> crate::Result<Balance> {
-    let tip_height = get_latest_height()? as i32;
+    let tip_height = get_latest_height(config)? as i32;
     let min_height = (tip_height - min_confirmations) as i32;
     let balance = match db::get_account(client, account)? {
         Account::Shielded(_, _) => {

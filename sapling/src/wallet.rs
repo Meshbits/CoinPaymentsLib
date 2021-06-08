@@ -8,7 +8,6 @@ use postgres::{Client, Row, Statement};
 
 use std::collections::HashMap;
 use std::convert::TryInto;
-use crate::constants::NETWORK;
 
 use std::sync::{Arc, Mutex};
 use zcash_client_backend::address::RecipientAddress;
@@ -31,6 +30,7 @@ use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{ExtendedFullViewingKey};
 use std::ops::DerefMut;
+use crate::ZamsConfig;
 
 pub mod scan;
 pub mod shielded_output;
@@ -38,6 +38,7 @@ pub mod transaction;
 
 pub struct PostgresWallet {
     pub client: Arc<Mutex<Client>>,
+    network: &'static Network,
     stmt_insert_block: Statement,
 
     stmt_upsert_tx_meta: Statement,
@@ -54,9 +55,10 @@ pub struct PostgresWallet {
 }
 
 impl PostgresWallet {
-    pub fn new(client: Arc<Mutex<Client>>) -> Result<PostgresWallet, WalletError> {
+    pub fn new(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> Result<PostgresWallet, WalletError> {
         let mut c = client.lock().unwrap();
         Ok(PostgresWallet {
+            network: config.network,
             client: client.clone(),
             stmt_insert_block: c.prepare(
                 "INSERT INTO blocks (height, hash, time, sapling_tree)
@@ -119,6 +121,7 @@ impl PostgresWallet {
 }
 
 struct WalletDbTransaction<'a> {
+    network: &'a Network,
     statements: &'a PostgresWallet,
     transaction: postgres::Transaction<'a>,
 }
@@ -217,7 +220,7 @@ impl<'a> WalletDbTransaction<'a> {
         let tx = tx_ref;
         let output_index = output.index() as i32;
         let nf_bytes = output.nullifier().map(|nf| nf.0.to_vec());
-        let address = encode_payment_address(NETWORK.hrp_sapling_payment_address(), output.to());
+        let address = encode_payment_address(self.network.hrp_sapling_payment_address(), output.to());
         let row = self.transaction.query_one(
             "SELECT account FROM accounts WHERE address = $1 AND fvk = $2",
             &[&address, &account],
@@ -371,7 +374,7 @@ impl WalletRead for PostgresWallet {
         )?;
         let row = row.map(|row| {
             let addr: String = row.get(0);
-            decode_payment_address(NETWORK.hrp_sapling_payment_address(), &addr).map_err(WalletError::Bech32)
+            decode_payment_address(self.network.hrp_sapling_payment_address(), &addr).map_err(WalletError::Bech32)
         });
         row.transpose().map(|r| r.flatten())
     }
@@ -390,7 +393,7 @@ impl WalletRead for PostgresWallet {
             let id_fvk: i32 = row.get(0);
             let account_id = AccountId(id_fvk as u32);
             let efvkr =
-                decode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), row.get(1))
+                decode_extended_full_viewing_key(self.network.hrp_sapling_extended_full_viewing_key(), row.get(1))
                     .map_err(WalletError::Bech32)?;
 
             res.insert(account_id, efvkr.ok_or(WalletError::IncorrectHrpExtFvk)?);
@@ -408,7 +411,7 @@ impl WalletRead for PostgresWallet {
         let statement =
             client.prepare("SELECT * FROM accounts WHERE account = $1 AND extfvk = $2")?;
         let extfvk =
-            encode_extended_full_viewing_key(NETWORK.hrp_sapling_extended_full_viewing_key(), extfvk);
+            encode_extended_full_viewing_key(self.network.hrp_sapling_extended_full_viewing_key(), extfvk);
 
         let res = client.query(&statement, &[&account.0, &extfvk])?;
         Ok(!res.is_empty())
@@ -530,6 +533,7 @@ impl WalletWrite for PostgresWallet {
     ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
         let mut client = self.client.lock().unwrap();
         let mut db_tx = WalletDbTransaction {
+            network: self.network,
             statements: self,
             transaction: client.transaction()?,
         };
@@ -581,6 +585,7 @@ impl WalletWrite for PostgresWallet {
     ) -> Result<Self::TxRef, Self::Error> {
         let mut client = self.client.lock().unwrap();
         let mut db_tx = WalletDbTransaction {
+            network: self.network,
             statements: self,
             transaction: client.transaction()?,
         };
@@ -602,6 +607,7 @@ impl WalletWrite for PostgresWallet {
     fn store_sent_tx(&mut self, sent_tx: &SentTransaction) -> Result<Self::TxRef, Self::Error> {
         let mut client = self.client.lock().unwrap();
         let mut db_tx = WalletDbTransaction {
+            network: self.network,
             statements: self,
             transaction: client.transaction()?,
         };
@@ -739,7 +745,7 @@ mod tests {
         let config = ZamsConfig::default();
         let client = Client::connect(&config.connection_string, NoTls).unwrap();
         let client = Arc::new(Mutex::new(client));
-        let w = PostgresWallet::new(client.clone()).unwrap();
+        let w = PostgresWallet::new(client.clone(), &config).unwrap();
         let mut client = client.lock().unwrap();
         let _ = client.execute(
             &w.stmt_insert_block,
@@ -747,6 +753,7 @@ mod tests {
         );
 
         let mut db_tx = WalletDbTransaction {
+            network: config.network,
             statements: &w,
             transaction: client.transaction().unwrap(),
         };

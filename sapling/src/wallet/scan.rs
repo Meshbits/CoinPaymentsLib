@@ -1,49 +1,35 @@
-use crate::grpc::compact_tx_streamer_client::CompactTxStreamerClient;
-use crate::grpc::{BlockId, BlockRange, ChainSpec};
-
-use prost::bytes::BytesMut;
-use prost::Message as M;
-use protobuf::Message;
-
 use tokio::runtime::{Runtime};
-use tonic::transport::Channel;
-
-use zcash_client_backend::data_api::chain::{scan_cached_blocks, validate_chain};
+use zcash_client_backend::data_api::chain::scan_cached_blocks;
 use zcash_client_backend::data_api::{BlockSource, WalletRead, WalletWrite};
-
 use zcash_client_backend::proto::compact_formats::CompactBlock;
-
 use zcash_primitives::consensus::{BlockHeight, Network, NetworkUpgrade, Parameters};
-
-
 use crate::error::WalletError;
 use crate::trp::TrpWallet;
 use crate::wallet::PostgresWallet;
 use crate::db;
-use futures::StreamExt;
 use postgres::Client;
-
-use std::ops::{Range, DerefMut};
-
+use std::ops::Range;
 use std::sync::{Mutex, Arc};
 use crate::config::ZamsConfig;
+use crate::trp::zcashdrpc::{get_block, get_latest_height, get_tree_state};
 
-const LIGHTNODE_URL: &str = "http://localhost:9067";
 const MAX_CHUNK: u32 = 1000;
 
-pub struct BlockLightwallet {
+pub struct ZcashdCompactBlockSource {
     client: Arc<Mutex<Client>>,
+    config: ZamsConfig,
 }
 
-impl BlockLightwallet {
-    pub fn new(client: Arc<Mutex<Client>>) -> BlockLightwallet {
-        BlockLightwallet {
+impl ZcashdCompactBlockSource {
+    pub fn new(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> ZcashdCompactBlockSource {
+        ZcashdCompactBlockSource {
             client,
+            config: config.clone(),
         }
     }
 }
 
-impl BlockSource for BlockLightwallet {
+impl BlockSource for ZcashdCompactBlockSource {
     type Error = WalletError;
 
     fn with_blocks<F>(
@@ -59,38 +45,20 @@ impl BlockSource for BlockLightwallet {
         let from_height = u32::from(from_height);
         let start_height = from_height + 1;
         let r = Runtime::new().unwrap();
-        let tip_height = get_latest_height()?;
+        let tip_height = get_latest_height(&self.config)?;
         let end_height = from_height
             .saturating_add(limit.unwrap_or(u32::MAX))
             .min(tip_height);
 
         let blocks = r.block_on(async {
-            let mut client = connect_lightnode().await.unwrap();
-            let blocks = client
-                .get_block_range(tonic::Request::new(BlockRange {
-                    start: Some(BlockId {
-                        hash: Vec::new(),
-                        height: start_height as u64,
-                    }),
-                    end: Some(BlockId {
-                        hash: Vec::new(),
-                        height: end_height as u64,
-                    }),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            let blocks: Vec<CompactBlock> = blocks
-                .map(|cb| {
-                    let cb = cb.unwrap();
-                    let mut cb_bytes = BytesMut::with_capacity(cb.encoded_len());
-                    cb.encode_raw(&mut cb_bytes);
-                    CompactBlock::parse_from_bytes(&cb_bytes).unwrap()
-                })
-                .collect()
-                .await;
-            blocks
-        });
+            let client = reqwest::Client::new();
+            let mut blocks: Vec<CompactBlock> = vec![];
+            for height in start_height..=end_height {
+                let block = get_block(&format!("{}", height), &client, &self.config).await?;
+                blocks.push(block.to_compact()?);
+            }
+            Ok::<_, WalletError>(blocks)
+        })?;
         if blocks.is_empty() { return Ok(()) }
 
         let block_hash = {
@@ -112,36 +80,8 @@ impl BlockSource for BlockLightwallet {
     }
 }
 
-pub async fn connect_lightnode() -> anyhow::Result<CompactTxStreamerClient<Channel>> {
-    let channel = tonic::transport::Channel::from_shared(LIGHTNODE_URL)?;
-    let client = CompactTxStreamerClient::connect(channel).await?;
-    Ok(client)
-}
-
-#[allow(dead_code)]
-pub fn validate(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletError> {
-    let source = BlockLightwallet::new(client);
-    validate_chain(&Network::TestNetwork, &source, None)?;
-
-    Ok(())
-}
-
-pub fn get_latest_height() -> crate::Result<u32> {
-    let r = Runtime::new().unwrap();
-    r.block_on(async {
-        let mut client = connect_lightnode().await?;
-        let tip_height = client
-            .get_latest_block(ChainSpec {})
-            .await
-            .unwrap()
-            .into_inner()
-            .height as u32;
-        Ok::<_, WalletError>(tip_height)
-    })
-}
-
-pub fn get_scan_range(client: Arc<Mutex<Client>>) -> anyhow::Result<Range<u32>, WalletError> {
-    let wallet = PostgresWallet::new(client.clone()).unwrap();
+pub fn get_scan_range(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Result<Range<u32>, WalletError> {
+    let wallet = PostgresWallet::new(client.clone(), config).unwrap();
     let sapling_activation_height: u32 = Network::TestNetwork
         .activation_height(NetworkUpgrade::Sapling)
         .unwrap()
@@ -151,14 +91,14 @@ pub fn get_scan_range(client: Arc<Mutex<Client>>) -> anyhow::Result<Range<u32>, 
             .unwrap_or(sapling_activation_height - 1)
     })? + 1;
     let _r = Runtime::new().unwrap();
-    let tip_height = get_latest_height()? + 1;
+    let tip_height = get_latest_height(config)? + 1;
     let to_height = tip_height.min(from_height + MAX_CHUNK);
     Ok(from_height..to_height)
 }
 
-pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletError> {
-    let source = BlockLightwallet::new(client.clone());
-    let mut data = PostgresWallet::new(client)?;
+pub fn scan_sapling(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Result<(), WalletError> {
+    let source = ZcashdCompactBlockSource::new(client.clone(), config);
+    let mut data = PostgresWallet::new(client, config)?;
     scan_cached_blocks(&Network::TestNetwork, &source, &mut data, Some(MAX_CHUNK))?;
     Ok(())
 }
@@ -166,13 +106,13 @@ pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletErro
 pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Result<u32, WalletError> {
     let mut trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
     let range = loop {
-        let range = get_scan_range(client.clone())?;
+        let range = get_scan_range(client.clone(), config)?;
         println!("{:?}", &range);
         if range.end <= range.start {
             break range;
         }
         let scan_result = {
-            scan_sapling(client.clone())?;
+            scan_sapling(client.clone(), config)?;
             trp_wallet.scan_transparent(range.clone())?;
             Ok(())
         };
@@ -185,33 +125,22 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Re
     Ok(range.end)
 }
 
-pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32) -> Result<(), WalletError> {
-    let r = Runtime::new().unwrap();
-    let tree_state = r.block_on(async {
-        let mut client = connect_lightnode().await?;
-        Ok::<_, WalletError>(
-            client
-                .get_tree_state(BlockId {
-                    height: height as u64,
-                    hash: vec![],
-                })
-                .await?
-                .into_inner(),
-        )
-    })?;
+pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
+    let tree_state = get_tree_state(height, config)?;
 
+    let mut client = client.lock().unwrap();
     db::load_checkpoint(
-        client.lock().unwrap().deref_mut(),
-        tree_state.height as u32,
+        &mut *client,
+        height as u32,
         &hex::decode(tree_state.hash).map_err(|_| anyhow::anyhow!("Not hex"))?,
-        tree_state.time as i32,
+        0, // TODO: tree_state.time as i32,
         &hex::decode(tree_state.tree).map_err(|_| anyhow::anyhow!("Not hex"))?,
     )?;
     Ok(())
 }
 
 pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
-    let mut data = PostgresWallet::new(client.clone())?;
+    let mut data = PostgresWallet::new(client.clone(), config)?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
     let trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
     trp_wallet.rewind_to_height(height)?;
