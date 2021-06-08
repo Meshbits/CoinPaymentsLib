@@ -12,6 +12,7 @@ pub enum WalletError {
     Postgres(postgres::Error),
     Tonic(tonic::Status),
     TxBuilder(zcash_primitives::transaction::builder::Error),
+    Reorg,
 }
 
 impl From<data_api::error::Error<i32>> for WalletError {

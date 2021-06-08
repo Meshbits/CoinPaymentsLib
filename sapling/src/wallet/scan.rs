@@ -30,7 +30,17 @@ use std::sync::{Mutex, Arc};
 const LIGHTNODE_URL: &str = "http://localhost:9067";
 const MAX_CHUNK: u32 = 1000;
 
-pub struct BlockLightwallet {}
+pub struct BlockLightwallet {
+    client: Arc<Mutex<Client>>,
+}
+
+impl BlockLightwallet {
+    pub fn new(client: Arc<Mutex<Client>>) -> BlockLightwallet {
+        BlockLightwallet {
+            client,
+        }
+    }
+}
 
 impl BlockSource for BlockLightwallet {
     type Error = WalletError;
@@ -44,11 +54,13 @@ impl BlockSource for BlockLightwallet {
     where
         F: FnMut(CompactBlock) -> Result<(), Self::Error>,
     {
-        let from_height = u32::from(from_height) + 1;
+        // We scan [from_height+1, from_height+limit] (inclusive)
+        let from_height = u32::from(from_height);
+        let start_height = from_height + 1;
         let r = Runtime::new().unwrap();
         let tip_height = get_latest_height()?;
-        let to_height = from_height
-            .saturating_add(limit.unwrap_or(u32::MAX) - 1)
+        let end_height = from_height
+            .saturating_add(limit.unwrap_or(u32::MAX))
             .min(tip_height);
 
         let blocks = r.block_on(async {
@@ -57,11 +69,11 @@ impl BlockSource for BlockLightwallet {
                 .get_block_range(tonic::Request::new(BlockRange {
                     start: Some(BlockId {
                         hash: Vec::new(),
-                        height: from_height as u64,
+                        height: start_height as u64,
                     }),
                     end: Some(BlockId {
                         hash: Vec::new(),
-                        height: to_height as u64,
+                        height: end_height as u64,
                     }),
                 }))
                 .await
@@ -78,6 +90,18 @@ impl BlockSource for BlockLightwallet {
                 .await;
             blocks
         });
+        if blocks.is_empty() { return Ok(()) }
+
+        let block_hash = {
+            let mut client = self.client.lock().unwrap();
+            db::get_block_by_height(&mut *client, u32::from(from_height))
+        }?;
+        if let Some(block_hash) = block_hash {
+            let b = blocks.first().unwrap();
+            if b.prevHash != block_hash {
+                return Err(WalletError::Reorg)
+            }
+        }
 
         for cb in blocks {
             with_row(cb).unwrap();
@@ -94,8 +118,8 @@ pub async fn connect_lightnode() -> anyhow::Result<CompactTxStreamerClient<Chann
 }
 
 #[allow(dead_code)]
-pub fn validate() -> anyhow::Result<(), WalletError> {
-    let source = BlockLightwallet {};
+pub fn validate(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletError> {
+    let source = BlockLightwallet::new(client);
     validate_chain(&Network::TestNetwork, &source, None)?;
 
     Ok(())
@@ -132,7 +156,7 @@ pub fn get_scan_range(client: Arc<Mutex<Client>>) -> anyhow::Result<Range<u32>, 
 }
 
 pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletError> {
-    let source = BlockLightwallet {};
+    let source = BlockLightwallet::new(client.clone());
     let mut data = PostgresWallet::new(client)?;
     scan_cached_blocks(&Network::TestNetwork, &source, &mut data, Some(MAX_CHUNK))?;
     Ok(())
@@ -140,16 +164,24 @@ pub fn scan_sapling(client: Arc<Mutex<Client>>) -> anyhow::Result<(), WalletErro
 
 pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> anyhow::Result<u32, WalletError> {
     let mut trp_wallet = TrpWallet::new(client.clone())?;
-    let end_height = loop {
+    let range = loop {
         let range = get_scan_range(client.clone())?;
-        println!("{:?}", range);
+        println!("{:?}", &range);
         if range.end <= range.start {
-            break range.end;
+            break range;
         }
-        scan_sapling(client.clone())?;
-        trp_wallet.scan_transparent(range, config)?;
+        let scan_result = {
+            scan_sapling(client.clone())?;
+            trp_wallet.scan_transparent(range.clone(), config)?;
+            Ok(())
+        };
+        match scan_result {
+            Err(WalletError::Reorg) => rewind_to_height(client.clone(), range.start - 10)?,
+            _ => scan_result?,
+        }
     };
-    Ok(end_height)
+
+    Ok(range.end)
 }
 
 pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32) -> Result<(), WalletError> {

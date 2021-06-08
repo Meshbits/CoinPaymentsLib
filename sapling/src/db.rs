@@ -317,6 +317,13 @@ pub fn trp_rewind_to_height<C: GenericClient>(
     Ok(())
 }
 
+pub fn get_block_by_height<C: GenericClient>(client: &mut C, height: u32) -> crate::Result<Option<Vec<u8>>> {
+    let row = client.query_opt("SELECT hash FROM blocks WHERE height = $1", &[&(height as i32)])?;
+    Ok(row.map(|row| {
+        row.get::<_, Vec<u8>>(0)
+    }))
+}
+
 pub fn get_balance<C: GenericClient>(
     client: &mut C,
     account: i32,

@@ -11,17 +11,20 @@ use std::ops::{DerefMut, Range};
 
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
+use crate::db;
 
 pub mod zcashdrpc;
 
 pub struct BlockSource {
     config: ZcashdConf,
+    client: Arc<Mutex<Client>>,
 }
 
 impl BlockSource {
-    pub fn new(config: &ZcashdConf) -> BlockSource {
+    pub fn new(client: Arc<Mutex<Client>>, config: &ZcashdConf) -> BlockSource {
         BlockSource {
             config: config.clone(),
+            client,
         }
     }
 
@@ -33,6 +36,19 @@ impl BlockSource {
         let client = reqwest::Client::new();
         for height in range {
             let block = r.block_on(get_block(&height.to_string(), &client, &self.config))?;
+            let prev_block_hash = {
+                let mut client = self.client.lock().unwrap();
+                db::get_block_by_height(&mut *client, height - 1)?
+            };
+            match (prev_block_hash, block.previousblockhash.as_ref()) {
+                (Some(mut ph), Some(ph2)) => {
+                    ph.reverse(); // zcashd returns hashes in LSB
+                    if hex::encode(ph) != *ph2 {
+                        return Err(WalletError::Reorg)
+                    }
+                }
+                _ => ()
+            }
             with_block(block)?;
         }
         Ok(())
@@ -120,12 +136,12 @@ impl TrpWallet {
         range: Range<u32>,
         config: &ZcashdConf,
     ) -> Result<(), WalletError> {
-        let mut c = self.client.lock().unwrap();
-        let source = BlockSource::new(&config);
+        let source = BlockSource::new(self.client.clone(), &config);
         source.with_blocks(range, |block| {
+            let mut c = self.client.lock().unwrap();
             for tx in block.tx.iter() {
-                self.scan_inputs(tx, c.deref_mut())?;
-                self.scan_outputs(tx, c.deref_mut())?;
+                self.scan_inputs(tx, &mut *c)?;
+                self.scan_outputs(tx, &mut *c)?;
             }
             Ok(())
         })
