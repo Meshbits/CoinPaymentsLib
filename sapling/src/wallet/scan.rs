@@ -107,7 +107,7 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Re
     let mut trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
     let range = loop {
         let range = get_scan_range(client.clone(), config)?;
-        println!("{:?}", &range);
+        log::info!("Scan {:?}", &range);
         if range.end <= range.start {
             break range;
         }

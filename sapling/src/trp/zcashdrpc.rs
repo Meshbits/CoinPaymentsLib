@@ -184,7 +184,6 @@ pub fn send_raw_tx(raw_tx: &str, config: &ZamsConfig) -> crate::Result<String> {
     let txid = r.block_on(async {
         let client = reqwest::Client::new();
         let res = make_json_rpc(&client, "sendrawtransaction", json!([&raw_tx]), config).await?;
-        println!("{:?}", res);
         let txid = res.as_str().unwrap().to_string();
         Ok::<_, WalletError>(txid)
     })?;

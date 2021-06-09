@@ -1,3 +1,4 @@
 *.json
 generated/
 zams.ini
+logs/
