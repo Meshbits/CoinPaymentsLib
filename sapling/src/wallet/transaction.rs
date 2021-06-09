@@ -5,7 +5,7 @@ use zcash_client_backend::address::RecipientAddress;
 use zcash_client_backend::encoding::{
     decode_extended_full_viewing_key, decode_extended_spending_key, decode_payment_address,
 };
-use zcash_primitives::consensus::{BlockHeight, BranchId, Network, Parameters};
+use zcash_primitives::consensus::{BlockHeight, BranchId, Parameters};
 use zcash_primitives::merkle_tree::IncrementalWitness;
 use zcash_primitives::sapling::{Diversifier, Node, Rseed};
 use zcash_primitives::transaction::builder::Builder;
@@ -125,7 +125,7 @@ pub fn prepare_tx<P: Parameters, C: GenericClient, R: RngCore>(
     amount: i64,
     c: &mut C,
     statements: &DbPreparedStatements,
-    rng: &mut R,
+    rng: &mut R
 ) -> crate::Result<UnsignedTx> {
     let amount = Amount::from_i64(amount).map_err(|_| anyhow!("Cannot convert amount"))?;
     let target_value = amount + DEFAULT_FEE;
@@ -186,7 +186,7 @@ pub fn prepare_tx<P: Parameters, C: GenericClient, R: RngCore>(
         }
     };
 
-    RecipientAddress::decode(&Network::TestNetwork, to_address)
+    RecipientAddress::decode(network, to_address)
         .ok_or_else(|| WalletError::Error(anyhow!("Could not decode address {}", to_address)))?;
 
     tx.output = Some(SaplingTxOut {
@@ -215,8 +215,8 @@ pub fn sign_tx<P: Parameters>(network: &P, spending_key: &str, unsigned_tx: Unsi
     let prover = LocalTxProver::with_default_location()
         .ok_or_else(|| WalletError::Error(anyhow!("Could not build local prover")))?;
     let height = BlockHeight::from_u32(unsigned_tx.height as u32);
-    let consensus_branch_id = BranchId::for_height(&Network::TestNetwork, height);
-    let mut builder = Builder::new(Network::TestNetwork, height);
+    let consensus_branch_id = BranchId::for_height(network, height);
+    let mut builder = Builder::new(network.clone(), height);
 
     for input in unsigned_tx.trp_inputs.iter() {
         let seckey =
@@ -257,7 +257,7 @@ pub fn sign_tx<P: Parameters>(network: &P, spending_key: &str, unsigned_tx: Unsi
     }
 
     let output = unsigned_tx.output.unwrap();
-    let recipient = RecipientAddress::decode(&Network::TestNetwork, &output.address)
+    let recipient = RecipientAddress::decode(network, &output.address)
         .ok_or_else(|| WalletError::Error(anyhow!("Invalid recipient address")))?;
     let ovk = match output.ovk.as_str() {
         "" => None,
@@ -277,7 +277,7 @@ pub fn sign_tx<P: Parameters>(network: &P, spending_key: &str, unsigned_tx: Unsi
     }
 
     let change_recipient =
-        RecipientAddress::decode(&Network::TestNetwork, &unsigned_tx.change_address)
+        RecipientAddress::decode(network, &unsigned_tx.change_address)
             .ok_or_else(|| WalletError::Error(anyhow!("Invalid recipient address")))?;
     let change_pa = match change_recipient {
         RecipientAddress::Shielded(pa) => pa,

@@ -46,6 +46,10 @@ grpcurl -import-path proto -proto api.proto -plaintext \
 localhost:3001 zams.BlockExplorer.Sync
 
 grpcurl -import-path proto -proto api.proto -plaintext \
+-d '{"height": 1278000}' \
+localhost:3001 zams.BlockExplorer.Rewind
+
+grpcurl -import-path proto -proto api.proto -plaintext \
 -d '{"address": "tmJ3oV1rtGNEvV3BR6aHCfb4Gns5e4gE1mL"}' \
 localhost:3001 zams.BlockExplorer.ValidateAddress
 

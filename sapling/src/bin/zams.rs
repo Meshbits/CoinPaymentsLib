@@ -3,7 +3,7 @@ use tonic::transport::Server;
 use sapling::error::{WalletError};
 
 use tonic::{Request, Response};
-use sapling::{DbPreparedStatements, get_balance, generate_address, import_address, cancel_payment, list_pending_payments, get_payment_info, import_fvk, get_latest_height};
+use sapling::{DbPreparedStatements, get_balance, generate_address, import_address, cancel_payment, list_pending_payments, get_payment_info, import_fvk, get_latest_height, rewind_to_height};
 use postgres::{Client, NoTls};
 use sapling::{prepare_tx, scan_chain, broadcast_tx, ZamsConfig};
 use std::sync::{Arc, Mutex};
@@ -174,9 +174,13 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
 
     async fn rewind(
         &self,
-        _request: Request<grpc::BlockHeight>,
+        request: Request<grpc::BlockHeight>,
     ) -> Result<Response<grpc::Empty>, tonic::Status> {
-        todo!()
+        let request = request.into_inner();
+        block_in_place(|| {
+            rewind_to_height(self.client.clone(), request.height, &self.config)
+        })?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn import_public_key(
