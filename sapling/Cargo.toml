@@ -37,8 +37,6 @@ hex = "0.4.3"
 rand = "0.8.3"
 bytes = "1.0.1"
 toml = "0.5.8"
-itertools = "0.10.0"
-maplit = "1.0.2"
 futures = "0.3.15"
 secp256k1 = "0.20.2"
 tiny-hderive = "0.3.0"
@@ -47,6 +45,9 @@ ripemd160 = "0.9.1"
 sha2 = "0.9.5"
 configparser = "2.1.0"
 chrono = "0.4.19"
+prometheus = { version = "0.12.0", features = [ "process" ] }
+warp = "0.3.1"
+lazy_static = "1.4.0"
 
 [dependencies.zcash_client_backend]
 git = "https://github.com/zcash/librustzcash.git"

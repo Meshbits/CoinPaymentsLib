@@ -37,9 +37,13 @@ pub struct TransactionOutput {
 pub struct Transaction {
     pub txid: String,
     pub height: Option<u32>,
+    #[serde(default)]
     pub vin: Vec<TransactionInput>,
+    #[serde(default)]
     pub vout: Vec<TransactionOutput>,
+    #[serde(default)]
     pub vShieldedSpend: Vec<ShieldedSpend>,
+    #[serde(default)]
     pub vShieldedOutput: Vec<ShieldedOutput>
 }
 

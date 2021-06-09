@@ -14,9 +14,9 @@ use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_pa
 use zcash_primitives::consensus::{BlockHeight, Parameters};
 use zcash_primitives::zip32::DiversifierIndex;
 
-
 use crate::zams_rpc::*;
 use crate::trp::zcashdrpc::get_latest_height;
+use crate::perfcounters::ACCOUNTS;
 
 pub struct DbPreparedStatements {
     pub stmt_select_sapling_notes: Statement,
@@ -125,6 +125,8 @@ pub fn generate_address<P: Parameters, C: GenericClient>(
         &[&id_fvk, &address],
     )?;
     let account: i32 = row.get(0);
+
+    ACCOUNTS.inc();
 
     Ok((account, address, diversifier_index_out))
 }

@@ -10,6 +10,7 @@ mod db;
 mod trp;
 mod wallet;
 mod keys;
+mod perfcounters;
 
 pub use crate::config::ZamsConfig;
 pub use crate::error::WalletError;
@@ -19,3 +20,6 @@ pub use crate::wallet::scan::{load_checkpoint, rewind_to_height, scan_chain};
 pub use crate::wallet::transaction::{broadcast_tx, prepare_tx, sign_tx};
 pub use crate::keys::{get_bip39_seed, generate_sapling_keys, generate_transparent_address};
 pub use crate::trp::zcashdrpc::get_latest_height;
+pub use crate::perfcounters::{register_custom_metrics, REGISTRY, REQUESTS};
+
+pub const ZATPERZEC: f64 = 1e8;

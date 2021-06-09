@@ -152,6 +152,11 @@ message AccountCursor {
   uint64 diversifier_low = 4;
 }
 
+message BatchNewAccountsRequest {
+  PubKeyCursor pubkey_cursor = 1;
+  int32 count = 2;
+}
+
 message Balance {
   uint64 total = 1;
   uint64 available = 2;
@@ -190,6 +195,8 @@ service BlockExplorer {
 
   rpc ImportPublicKey(PubKey) returns (PubKeyId);
   rpc NewAccount(PubKeyCursor) returns (AccountCursor);
+
+  rpc BatchNewAccounts(BatchNewAccountsRequest) returns (AccountCursor);
 }
 
 service Signer {

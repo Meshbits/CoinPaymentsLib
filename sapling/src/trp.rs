@@ -11,7 +11,7 @@ use std::ops::{DerefMut, Range};
 
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
-use crate::db;
+use crate::{db, ZATPERZEC};
 use crate::config::ZamsConfig;
 
 pub mod zcashdrpc;
@@ -78,6 +78,8 @@ impl TrpWallet {
         for input in tx.vin.iter() {
             if let Some(ref address) = input.address {
                 if let Some(account) = self.addresses.get(address.as_str()) {
+                    crate::perfcounters::RECEIVED_NOTES.inc();
+                    crate::perfcounters::RECEIVED_AMOUNT.inc_by((input.valueSat.unwrap() as f64) / ZATPERZEC);
                     let txid = hex::decode(input.txid.as_ref().unwrap())?;
                     let script: Vec<u8> = vec![];
                     client.execute(
@@ -143,6 +145,7 @@ impl TrpWallet {
             for tx in block.tx.iter() {
                 self.scan_inputs(tx, &mut *c)?;
                 self.scan_outputs(tx, &mut *c)?;
+                crate::perfcounters::TRANSACTIONS.inc();
             }
             Ok(())
         })

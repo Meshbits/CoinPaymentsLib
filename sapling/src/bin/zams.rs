@@ -8,6 +8,7 @@ use sapling::{
     cancel_payment, generate_address, get_balance, get_latest_height, get_payment_info,
     import_address, import_fvk, list_pending_payments, rewind_to_height, DbPreparedStatements,
 };
+use sapling::{register_custom_metrics, REGISTRY};
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response};
 
@@ -16,13 +17,15 @@ use std::time::{Duration, SystemTime};
 use tokio::runtime::Runtime;
 use tokio::task::block_in_place;
 
+use chrono::{DateTime, Local};
+use flexi_logger::{Age, Cleanup, Criterion, Logger, Naming};
 use sapling::zams_rpc as grpc;
 use sapling::zams_rpc::*;
+use sapling::REQUESTS;
+use warp::{Filter, Rejection, Reply};
 use zcash_client_backend::address::RecipientAddress;
 use zcash_primitives::consensus::TestNetwork;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
-use flexi_logger::{Logger, Criterion, Naming, Cleanup, Age};
-use chrono::{DateTime, Local};
 
 struct ZAMS {
     config: ZamsConfig,
@@ -243,6 +246,80 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         });
         Ok(Response::new(account))
     }
+
+    async fn batch_new_accounts(
+        &self,
+        request: Request<BatchNewAccountsRequest>,
+    ) -> Result<Response<AccountCursor>, tonic::Status> {
+        let request = request.into_inner();
+        let pubkey_cursor = request.pubkey_cursor.unwrap();
+        let mut diversifier_index =
+            (pubkey_cursor.diversifier_high as u128) << 64 | pubkey_cursor.diversifier_low as u128;
+        let count = request.count as usize;
+        let account = block_in_place(|| {
+            let mut client = self.client.lock().unwrap();
+            let mut account_cursor = None;
+            for _ in 0..count {
+                let (id_account, address, di) = generate_address(
+                    self.config.network,
+                    &mut *client,
+                    pubkey_cursor.id_fvk,
+                    diversifier_index,
+                )
+                .unwrap();
+                diversifier_index = di;
+                account_cursor = Some(AccountCursor {
+                    id_account,
+                    address,
+                    diversifier_high: (di >> 64) as u64,
+                    diversifier_low: di as u64,
+                });
+            }
+            account_cursor
+        });
+        Ok(Response::new(
+            account.ok_or_else(|| WalletError::from(anyhow::anyhow!("")))?,
+        ))
+    }
+}
+
+async fn metrics_handler() -> Result<impl Reply, Rejection> {
+    use prometheus::Encoder;
+    let encoder = prometheus::TextEncoder::new();
+
+    let mut buffer = Vec::new();
+    if let Err(e) = encoder.encode(&REGISTRY.gather(), &mut buffer) {
+        eprintln!("could not encode custom metrics: {}", e);
+    };
+    let mut res = match String::from_utf8(buffer.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("custom metrics could not be from_utf8'd: {}", e);
+            String::default()
+        }
+    };
+    buffer.clear();
+
+    let mut buffer = Vec::new();
+    if let Err(e) = encoder.encode(&prometheus::gather(), &mut buffer) {
+        eprintln!("could not encode prometheus metrics: {}", e);
+    };
+    let res_custom = match String::from_utf8(buffer.clone()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("prometheus metrics could not be from_utf8'd: {}", e);
+            String::default()
+        }
+    };
+    buffer.clear();
+
+    res.push_str(&res_custom);
+    Ok(res)
+}
+
+fn perfcounter_interceptor(req: Request<()>) -> Result<Request<()>, tonic::Status> {
+    REQUESTS.inc();
+    Ok(req)
 }
 
 fn main() {
@@ -254,7 +331,11 @@ fn main() {
             Naming::Timestamps,
             Cleanup::KeepLogFiles(7),
         )
-        .start().unwrap();
+        .start()
+        .unwrap();
+
+    register_custom_metrics();
+    let metrics_route = warp::path!("metrics").and_then(metrics_handler);
 
     let now = SystemTime::now();
     let dt: DateTime<Local> = now.into();
@@ -262,13 +343,19 @@ fn main() {
     let config = ZamsConfig::default();
     let port = config.port;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
-    let exporer = ZAMS::new();
+    let explorer = ZAMS::new();
     let r = Runtime::new().unwrap();
+
+    r.spawn(warp::serve(metrics_route).run(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port + 10)));
+
     r.block_on(
         Server::builder()
-            .add_service(grpc::block_explorer_server::BlockExplorerServer::new(
-                exporer,
-            ))
+            .add_service(
+                grpc::block_explorer_server::BlockExplorerServer::with_interceptor(
+                    explorer,
+                    perfcounter_interceptor,
+                ),
+            )
             .serve(addr),
     )
     .unwrap();

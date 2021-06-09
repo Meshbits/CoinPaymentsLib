@@ -10,7 +10,7 @@ use zcash_primitives::merkle_tree::IncrementalWitness;
 use zcash_primitives::sapling::{Diversifier, Node, Rseed};
 use zcash_primitives::transaction::builder::Builder;
 use zcash_primitives::transaction::components::{Amount, OutPoint, TxOut};
-use crate::{db, ZamsConfig};
+use crate::{db, ZamsConfig, ZATPERZEC};
 use crate::db::DbPreparedStatements;
 use postgres::{Client, GenericClient};
 use rand::prelude::SliceRandom;
@@ -208,6 +208,9 @@ pub fn prepare_tx<P: Parameters, C: GenericClient, R: RngCore>(
     )?;
     tx.id = id_payment;
 
+    crate::perfcounters::PAYMENTS.inc_by((i64::from(amount) as f64) / ZATPERZEC);
+    crate::perfcounters::PREPARED_PAYMENTS.inc();
+
     Ok(tx)
 }
 
@@ -309,6 +312,7 @@ pub fn sign_tx<P: Parameters>(network: &P, spending_key: &str, unsigned_tx: Unsi
 pub fn broadcast_tx(c: &mut Client, signed_tx: &SignedTx, config: &ZamsConfig) -> crate::Result<String> {
     let tx_id = send_raw_tx(&signed_tx.raw_tx, config)?;
     db::mark_paid(c, signed_tx.id, &tx_id)?;
+    crate::perfcounters::BROADCAST_PAYMENTS.inc();
     Ok(tx_id)
 }
 

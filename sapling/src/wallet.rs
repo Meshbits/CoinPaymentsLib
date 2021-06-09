@@ -30,7 +30,7 @@ use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{ExtendedFullViewingKey};
 use std::ops::DerefMut;
-use crate::ZamsConfig;
+use crate::{ZamsConfig, ZATPERZEC};
 
 pub mod scan;
 pub mod shielded_output;
@@ -245,6 +245,9 @@ impl<'a> WalletDbTransaction<'a> {
             &is_change,
             &height,
         ];
+
+        crate::perfcounters::RECEIVED_NOTES.inc();
+        crate::perfcounters::RECEIVED_AMOUNT.inc_by((value as f64) / ZATPERZEC);
 
         self.transaction
             .query_one(&self.statements.stmt_upsert_received_note, sql_args)
