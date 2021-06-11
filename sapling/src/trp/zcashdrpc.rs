@@ -171,7 +171,7 @@ pub fn get_tree_state(height: u32, config: &ZamsConfig) -> crate::Result<TreeSta
     let r = Runtime::new().unwrap();
     let tree_state = r.block_on(async {
         let client = reqwest::Client::new();
-        let height = format!("{}", height);
+        let height = height.to_string();
         let res = make_json_rpc(&client, "z_gettreestate", json!([&height]), config).await?;
         let hash = res[&"hash"].as_str().unwrap().to_string();
         let tree = res[&"sapling"][&"commitments"][&"finalState"].as_str().unwrap().to_string();

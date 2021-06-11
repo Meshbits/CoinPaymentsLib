@@ -1,10 +1,8 @@
-
 use clap::Clap;
 use rand::thread_rng;
 use sapling::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, import_fvk};
 use postgres::{NoTls, Client};
 use sapling::{DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
-use std::ops::DerefMut;
 use std::time::SystemTime;
 use std::sync::{Mutex, Arc};
 use sapling::config::ZamsConfig;
@@ -60,30 +58,31 @@ fn main() {
     let config = ZamsConfig::default();
     let connection = Client::connect(&config.connection_string, NoTls).unwrap();
     let c = Arc::new(Mutex::new(connection));
-    let statements = DbPreparedStatements::prepare(c.lock().unwrap().deref_mut()).unwrap();
+    let statements = DbPreparedStatements::prepare(&mut *c.lock().unwrap()).unwrap();
     let mut rng = thread_rng();
 
     let opts = CommandArgs::parse();
     let cmd = opts.cmd;
     match cmd {
         Command::LoadCheckpoint { height } => {
-            load_checkpoint(c.clone(), height, &config).unwrap();
+            let mut client = c.lock().unwrap();
+            load_checkpoint(&mut *client, height, &config).unwrap();
         }
         Command::Rewind { height } => {
-            rewind_to_height(c.clone(), height, &config).unwrap();
+            rewind_to_height(c, height, &config).unwrap();
         }
         Command::Scan => {
-            scan_chain(c.clone(), &config).unwrap();
+            scan_chain(c, &config).unwrap();
         }
         Command::ImportFVK { fvk } => {
             let mut client = c.lock().unwrap();
             let id_fvk = import_fvk(&mut *client, &fvk).unwrap();
-            println!("{}", id_fvk);
+            println!("FVK {} imported as {}", fvk, id_fvk);
         }
         Command::ImportAddress { address } => {
             let mut client = c.lock().unwrap();
             let id_account = import_address(&mut *client, &address).unwrap();
-            println!("{}", id_account);
+            println!("Address {} imported as {}", address, id_account);
         }
         Command::GenerateNewAddress {
             id_fvk,
@@ -91,7 +90,7 @@ fn main() {
         } => {
             let mut client = c.lock().unwrap();
             let (id_account, addr, di) = generate_address(config.network, &mut *client, id_fvk, diversifier_index).unwrap();
-            println!("{} {} {}", id_account, &addr, di);
+            println!("New account {} generated with address {}. Next diversifier: {}", id_account, &addr, di);
         }
         Command::GetBalance { account, min_confirmations } => {
             let mut client = c.lock().unwrap();

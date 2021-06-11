@@ -2,12 +2,10 @@ use crate::db::{trp_rewind_to_height, DbPreparedStatements};
 use crate::error::WalletError;
 use crate::trp::zcashdrpc::{get_block, Block, Transaction};
 
-
-
 use postgres::{Client};
 
 use std::collections::HashMap;
-use std::ops::{DerefMut, Range};
+use std::ops::Range;
 
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
@@ -41,13 +39,10 @@ impl BlockSource {
                 let mut client = self.client.lock().unwrap();
                 db::get_block_by_height(&mut *client, height - 1)?
             };
-            match (prev_block_hash, block.previousblockhash.as_ref()) {
-                (Some(ph), Some(ph2)) => {
-                    if hex::encode(ph) != *ph2 {
-                        return Err(WalletError::Reorg)
-                    }
+            if let (Some(ph), Some(ph2)) = (prev_block_hash, block.previousblockhash.as_ref()) {
+                if hex::encode(ph) != *ph2 {
+                    return Err(WalletError::Reorg)
                 }
-                _ => ()
             }
             with_block(block)?;
         }
@@ -129,7 +124,7 @@ impl TrpWallet {
 
     pub fn load_transparent_addresses_from_db(&mut self) -> Result<(), WalletError> {
         let mut c = self.client.lock().unwrap();
-        let addresses = crate::db::get_all_trp_addresses(c.deref_mut())?;
+        let addresses = crate::db::get_all_trp_addresses(&mut *c)?;
         self.addresses
             .extend(addresses.iter().map(|(id, addr)| (addr.clone(), *id)));
         Ok(())

@@ -1,17 +1,17 @@
 use std::net::{SocketAddr, Ipv4Addr};
 use tonic::transport::Server;
-use sapling::error::{WalletError};
-use anyhow::{anyhow};
+use sapling::error::WalletError;
+use anyhow::anyhow;
 use tonic::{Request, Response, Status};
 use tokio::runtime::Runtime;
 
 use sapling::{zams_rpc as grpc, get_bip39_seed, generate_sapling_keys, generate_transparent_address, sign_tx, ZamsConfig};
 use sapling::zams_rpc::{Empty, VersionReply, Keys, Entropy, PubKey, pub_key, SignTxRequest, SignedTx};
 
-
 struct Signer {
     config: ZamsConfig,
 }
+
 impl Signer {
     pub fn new(config: &ZamsConfig) -> Signer {
         Signer {
@@ -24,7 +24,7 @@ impl Signer {
 impl grpc::signer_server::Signer for Signer {
     async fn get_version(&self, _request: Request<Empty>) -> Result<Response<VersionReply>, Status> {
         Ok(Response::new(VersionReply {
-            version: "1.0".to_string()
+            version: sapling::VERSION.to_string()
         }))
     }
 
@@ -33,7 +33,7 @@ impl grpc::signer_server::Signer for Signer {
         let seed = get_bip39_seed(request.clone())?;
         let (sk, address) = generate_transparent_address(self.config.network, seed, &request.path);
         let keys = Keys {
-            pk: Some(PubKey { address_type: Some(pub_key::AddressType::Address(address)) }),
+            pk: Some(PubKey { type_of_address: Some(pub_key::TypeOfAddress::Address(address)) }),
             sk
         };
         Ok(Response::new(keys))
@@ -44,7 +44,7 @@ impl grpc::signer_server::Signer for Signer {
         let seed = get_bip39_seed(request.clone())?;
         let (sk, fvk) = generate_sapling_keys(self.config.network, seed, &request.path);
         let keys = Keys {
-            pk: Some(PubKey { address_type: Some(pub_key::AddressType::Fvk(fvk)) }),
+            pk: Some(PubKey { type_of_address: Some(pub_key::TypeOfAddress::Fvk(fvk)) }),
             sk
         };
         Ok(Response::new(keys))
@@ -52,7 +52,7 @@ impl grpc::signer_server::Signer for Signer {
 
     async fn sign_tx(&self, request: Request<SignTxRequest>) -> Result<Response<SignedTx>, Status> {
         let request = request.into_inner();
-        let unsigned_tx = request.unsigned_tx.ok_or(WalletError::Error(anyhow!("Missing unsigned tx")))?;
+        let unsigned_tx = request.unsigned_tx.ok_or_else(|| WalletError::Error(anyhow!("Missing unsigned tx")))?;
         let signed_tx = sign_tx(self.config.network, &request.secret_key, unsigned_tx)?;
         Ok(Response::new(signed_tx))
     }

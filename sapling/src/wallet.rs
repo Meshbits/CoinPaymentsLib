@@ -1,6 +1,6 @@
 use crate::error::WalletError;
 use crate::wallet::shielded_output::ShieldedOutput;
-use crate::wallet::transaction::{SpendableNoteWithId};
+use crate::wallet::transaction::SpendableNoteWithId;
 
 use ff::PrimeField;
 use postgres::types::ToSql;
@@ -29,7 +29,6 @@ use zcash_primitives::sapling::{Diversifier, Node, Nullifier, PaymentAddress, Rs
 use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{ExtendedFullViewingKey};
-use std::ops::DerefMut;
 use crate::{ZamsConfig, ZATPERZEC};
 
 pub mod scan;
@@ -331,13 +330,15 @@ impl<'a> WalletDbTransaction<'a> {
     }
 }
 
+type WitnessVec = Vec<(i32, IncrementalWitness<Node>)>;
+
 impl WalletRead for PostgresWallet {
     type Error = WalletError;
     type NoteRef = i32;
     type TxRef = i32;
 
     fn block_height_extrema(&self) -> Result<Option<(BlockHeight, BlockHeight)>, Self::Error> {
-        crate::db::block_height_extrema(self.client.lock().unwrap().deref_mut())
+        crate::db::block_height_extrema(&mut *self.client.lock().unwrap())
     }
 
     fn get_block_hash(&self, block_height: BlockHeight) -> Result<Option<BlockHash>, Self::Error> {
@@ -467,7 +468,7 @@ impl WalletRead for PostgresWallet {
     fn get_witnesses(
         &self,
         block_height: BlockHeight,
-    ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
+    ) -> Result<WitnessVec, Self::Error> {
         let mut client = self.client.lock().unwrap();
         let stmt_fetch_witnesses =
             client.prepare("SELECT note, witness FROM sapling_witnesses WHERE block = $1")?;
@@ -533,7 +534,7 @@ impl WalletWrite for PostgresWallet {
         &mut self,
         block: &PrunedBlock,
         updated_witnesses: &[(Self::NoteRef, IncrementalWitness<Node>)],
-    ) -> Result<Vec<(Self::NoteRef, IncrementalWitness<Node>)>, Self::Error> {
+    ) -> Result<WitnessVec, Self::Error> {
         let mut client = self.client.lock().unwrap();
         let mut db_tx = WalletDbTransaction {
             network: self.network,

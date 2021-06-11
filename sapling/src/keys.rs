@@ -3,9 +3,8 @@ use zcash_client_backend::encoding::{encode_extended_spending_key, encode_extend
 use tiny_hderive::bip44::DerivationPath;
 use bip39::{Language, Mnemonic, Seed};
 use ripemd160::{Ripemd160, Digest};
-use sha2::{Sha256};
-use crate::zams_rpc::Entropy;
-use crate::zams_rpc::entropy::TypeOfEntropy;
+use sha2::Sha256;
+use crate::zams_rpc as grpc;
 
 use anyhow::Context;
 use tiny_hderive::bip32::ExtendedPrivKey;
@@ -13,12 +12,12 @@ use secp256k1::{SecretKey, PublicKey, Secp256k1, All};
 use zcash_primitives::legacy::TransparentAddress;
 use zcash_primitives::consensus::Parameters;
 
-pub fn get_bip39_seed(entropy: Entropy) -> crate::Result<Seed> {
+pub fn get_bip39_seed(entropy: grpc::Entropy) -> crate::Result<Seed> {
     let mnemonic = match entropy.type_of_entropy.context("Missing entropy")? {
-        TypeOfEntropy::SeedPhrase(seed) => {
+        grpc::entropy::TypeOfEntropy::SeedPhrase(seed) => {
             Mnemonic::from_phrase(&seed, Language::English)?
         }
-        TypeOfEntropy::Hex(hex) => {
+        grpc::entropy::TypeOfEntropy::Hex(hex) => {
             Mnemonic::from_entropy(&hex::decode(hex)?, Language::English)?
         }
     };

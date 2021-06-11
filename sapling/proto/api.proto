@@ -129,7 +129,7 @@ enum AddressType {
 }
 
 message PubKey {
-  oneof address_type {
+  oneof type_of_address {
     string fvk = 1;
     string address = 2;
   }

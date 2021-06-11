@@ -1,4 +1,4 @@
-use tokio::runtime::{Runtime};
+use tokio::runtime::Runtime;
 use zcash_client_backend::data_api::chain::scan_cached_blocks;
 use zcash_client_backend::data_api::{BlockSource, WalletRead, WalletWrite};
 use zcash_client_backend::proto::compact_formats::CompactBlock;
@@ -7,7 +7,7 @@ use crate::error::WalletError;
 use crate::trp::TrpWallet;
 use crate::wallet::PostgresWallet;
 use crate::db;
-use postgres::Client;
+use postgres::{Client, GenericClient};
 use std::ops::Range;
 use std::sync::{Mutex, Arc};
 use crate::config::ZamsConfig;
@@ -63,7 +63,7 @@ impl BlockSource for ZcashdCompactBlockSource {
 
         let block_hash = {
             let mut client = self.client.lock().unwrap();
-            db::get_block_by_height(&mut *client, u32::from(from_height))
+            db::get_block_by_height(&mut *client, from_height)
         }?;
         if let Some(block_hash) = block_hash {
             let b = blocks.first().unwrap();
@@ -81,7 +81,7 @@ impl BlockSource for ZcashdCompactBlockSource {
 }
 
 pub fn get_scan_range(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Result<Range<u32>, WalletError> {
-    let wallet = PostgresWallet::new(client.clone(), config).unwrap();
+    let wallet = PostgresWallet::new(client, config).unwrap();
     let sapling_activation_height: u32 = Network::TestNetwork
         .activation_height(NetworkUpgrade::Sapling)
         .unwrap()
@@ -125,12 +125,11 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Re
     Ok(range.end)
 }
 
-pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
+pub fn load_checkpoint<C: GenericClient>(client: &mut C, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
     let tree_state = get_tree_state(height, config)?;
 
-    let mut client = client.lock().unwrap();
     db::load_checkpoint(
-        &mut *client,
+        client,
         height as u32,
         &hex::decode(tree_state.hash).map_err(|_| anyhow::anyhow!("Not hex"))?,
         0, // TODO: tree_state.time as i32,
@@ -142,7 +141,7 @@ pub fn load_checkpoint(client: Arc<Mutex<Client>>, height: u32, config: &ZamsCon
 pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
     let mut data = PostgresWallet::new(client.clone(), config)?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
-    let trp_wallet = TrpWallet::new(client.clone(), config.clone())?;
+    let trp_wallet = TrpWallet::new(client, config.clone())?;
     trp_wallet.rewind_to_height(height)?;
     Ok(())
 }

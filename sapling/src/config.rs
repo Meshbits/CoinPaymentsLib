@@ -1,6 +1,5 @@
 use configparser::ini::Ini;
-use zcash_primitives::consensus::Network;
-use zcash_primitives::consensus::Network::{TestNetwork, MainNetwork};
+use zcash_primitives::consensus::Network::{self, TestNetwork, MainNetwork};
 
 #[derive(Debug, Clone)]
 pub struct ZamsConfig {

@@ -2,7 +2,7 @@ use crate::{db, ZamsConfig};
 use crate::error::WalletError;
 use crate::wallet::to_spendable_note;
 use crate::wallet::transaction::{Account, SpendableNoteWithId};
-use anyhow::{anyhow};
+use anyhow::anyhow;
 use postgres::{Client, GenericClient, Statement};
 
 use std::cmp;
@@ -14,7 +14,7 @@ use zcash_client_backend::encoding::{decode_extended_full_viewing_key, encode_pa
 use zcash_primitives::consensus::{BlockHeight, Parameters};
 use zcash_primitives::zip32::DiversifierIndex;
 
-use crate::zams_rpc::*;
+use crate::zams_rpc as grpc;
 use crate::trp::zcashdrpc::get_latest_height;
 use crate::perfcounters::ACCOUNTS;
 
@@ -150,7 +150,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
     c: &mut C,
     s: &DbPreparedStatements,
     address: &str,
-) -> crate::Result<Vec<Utxo>> {
+) -> crate::Result<Vec<grpc::Utxo>> {
     let rows = c
         .query(&s.stmt_select_trp_notes, &[&address])?;
     let notes: Vec<_> = rows
@@ -161,7 +161,7 @@ pub fn get_spendable_transparent_notes_by_address<C: GenericClient>(
             let output_index: i32 = row.get(2);
             let value: i64 = row.get(3);
             let script_hex: Vec<u8> = row.get(4);
-            Utxo {
+            grpc::Utxo {
                 id,
                 amount: value as u64,
                 tx_hash: hex::encode(&tx_hash),
@@ -242,6 +242,7 @@ pub fn block_height_extrema<C: GenericClient>(
     Ok(r)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn store_payment<C: GenericClient>(
     client: &mut C,
     datetime: SystemTime,
@@ -327,7 +328,7 @@ pub fn get_balance<C: GenericClient>(
     account: i32,
     min_confirmations: i32,
     config: &ZamsConfig
-) -> crate::Result<Balance> {
+) -> crate::Result<grpc::Balance> {
     let tip_height = get_latest_height(config)? as i32;
     let min_height = (tip_height - min_confirmations) as i32;
     let balance = match db::get_account(client, account)? {
@@ -336,7 +337,7 @@ pub fn get_balance<C: GenericClient>(
             let available= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
             let row = client.query_one("SELECT SUM(value)::BIGINT FROM received_notes WHERE spent IS NULL AND account = $1 AND height <= $2", &[&account, &min_height])?;
             let total = row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
-            Balance {
+            grpc::Balance {
                 total,
                 available
             }
@@ -346,7 +347,7 @@ pub fn get_balance<C: GenericClient>(
             let available= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
             let row = client.query_one("SELECT SUM(value)::BIGINT FROM utxos WHERE NOT spent AND address = $1 AND height <= $2", &[&address, &min_height])?;
             let total= row.get::<_, Option<i64>>(0).unwrap_or(0) as u64;
-            Balance {
+            grpc::Balance {
                 total,
                 available
             }
@@ -355,7 +356,7 @@ pub fn get_balance<C: GenericClient>(
     Ok(balance)
 }
 
-pub fn get_payment_info<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<Payment> {
+pub fn get_payment_info<C: GenericClient>(client: &mut C, id_payment: i32) -> crate::Result<grpc::Payment> {
     let row = client.query_one(
         "SELECT datetime, account, sender, recipient,
         change, amount, paid, txid FROM payments WHERE id_payment = $1",
@@ -370,7 +371,7 @@ pub fn get_payment_info<C: GenericClient>(client: &mut C, id_payment: i32) -> cr
     let paid: bool = row.get(6);
     let txid: Option<String> = row.get(7);
     let datetime = datetime.duration_since(UNIX_EPOCH).unwrap();
-    Ok(Payment {
+    Ok(grpc::Payment {
         id: id_payment,
         datetime: datetime.as_secs() as u32,
         account,
@@ -379,7 +380,7 @@ pub fn get_payment_info<C: GenericClient>(client: &mut C, id_payment: i32) -> cr
         change_address: change,
         amount: amount as u64,
         paid,
-        tx_id: txid.unwrap_or(String::new())
+        tx_id: txid.unwrap_or_else(String::new)
     })
 }
 
