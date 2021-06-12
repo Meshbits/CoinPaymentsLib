@@ -62,6 +62,15 @@ rev = "d50bb12a97da768dc8f3ee39b81f84262103e6eb"
 git = "https://github.com/zcash/librustzcash.git"
 rev = "d50bb12a97da768dc8f3ee39b81f84262103e6eb"
 
+[dev-dependencies]
+criterion = "^0.3"
+
+[[bench]]
+name = "taddr"
+harness = false
+
 [build-dependencies]
 tonic-build = { version = "^0.4", features = ["prost"] }
 
+[profile.release]
+debug = 1

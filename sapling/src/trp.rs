@@ -2,15 +2,14 @@ use crate::db::{trp_rewind_to_height, DbPreparedStatements};
 use crate::error::WalletError;
 use crate::trp::zcashdrpc::{get_block, Block, Transaction};
 
-use postgres::{Client};
+use postgres::Client;
 
 use std::collections::HashMap;
 use std::ops::Range;
 
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
-use crate::{db, ZATPERZEC};
-use crate::config::ZamsConfig;
+use crate::{db, ZATPERZEC, ZamsConfig};
 
 pub mod zcashdrpc;
 

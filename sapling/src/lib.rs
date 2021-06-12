@@ -11,6 +11,7 @@ mod keys;
 mod perfcounters;
 mod trp;
 mod wallet;
+mod utils;
 
 pub use crate::config::ZamsConfig;
 pub use crate::db::{
@@ -21,6 +22,8 @@ pub use crate::error::WalletError;
 pub use crate::keys::{generate_sapling_keys, generate_transparent_address, get_bip39_seed};
 pub use crate::perfcounters::{metrics_handler, register_custom_metrics, REGISTRY, REQUESTS};
 pub use crate::trp::zcashdrpc::get_latest_height;
+pub use crate::trp::TrpWallet;
+pub use crate::utils::{populate_taddr, populate_zaddr};
 pub use crate::wallet::scan::{load_checkpoint, rewind_to_height, scan_chain};
 pub use crate::wallet::transaction::{broadcast_tx, prepare_tx, sign_tx};
 

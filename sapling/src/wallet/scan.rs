@@ -111,11 +111,12 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Re
         if range.end <= range.start {
             break range;
         }
-        let scan_result = {
+        let mut scan = || {
             scan_sapling(client.clone(), config)?;
             trp_wallet.scan_transparent(range.clone())?;
             Ok(())
         };
+        let scan_result = scan();
         match scan_result {
             Err(WalletError::Reorg) => rewind_to_height(client.clone(), range.start - 10, config)?,
             _ => scan_result?,
@@ -139,6 +140,7 @@ pub fn load_checkpoint<C: GenericClient>(client: &mut C, height: u32, config: &Z
 }
 
 pub fn rewind_to_height(client: Arc<Mutex<Client>>, height: u32, config: &ZamsConfig) -> Result<(), WalletError> {
+    log::info!("Rewind to height {}", height);
     let mut data = PostgresWallet::new(client.clone(), config)?;
     data.rewind_to_height(BlockHeight::from_u32(height))?;
     let trp_wallet = TrpWallet::new(client, config.clone())?;
