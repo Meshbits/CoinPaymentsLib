@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS fvks (
     id_fvk INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    extfvk TEXT NOT NULL
+    extfvk TEXT NOT NULL,
+    diversifier_low BIGINT NOT NULL,
+    diversifier_high BIGINT NOT NULL
 );
 CREATE UNIQUE INDEX fvks_fvk ON fvks(extfvk);
 CREATE TABLE IF NOT EXISTS accounts (

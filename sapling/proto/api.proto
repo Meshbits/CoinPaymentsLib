@@ -139,21 +139,13 @@ message PubKeyId {
   int32 id = 1;
 }
 
-message PubKeyCursor {
-  int32 id_fvk = 1;
-  uint64 diversifier_high = 2;
-  uint64 diversifier_low = 3;
-}
-
-message AccountCursor {
+message AccountAddress {
   int32 id_account = 1;
   string address = 2;
-  uint64 diversifier_high = 3;
-  uint64 diversifier_low = 4;
 }
 
 message BatchNewAccountsRequest {
-  PubKeyCursor pubkey_cursor = 1;
+  int32 id_pubkey = 1;
   int32 count = 2;
 }
 
@@ -194,9 +186,9 @@ service BlockExplorer {
   rpc Rewind(BlockHeight) returns (Empty);
 
   rpc ImportPublicKey(PubKey) returns (PubKeyId);
-  rpc NewAccount(PubKeyCursor) returns (AccountCursor);
+  rpc NewAccount(PubKeyId) returns (AccountAddress);
 
-  rpc BatchNewAccounts(BatchNewAccountsRequest) returns (AccountCursor);
+  rpc BatchNewAccounts(BatchNewAccountsRequest) returns (Empty);
 }
 
 service Signer {

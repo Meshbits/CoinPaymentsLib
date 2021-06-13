@@ -72,7 +72,7 @@ pub fn load_checkpoint<C: GenericClient>(
 
 pub fn import_fvk<C: GenericClient>(c: &mut C, fvk: &str) -> crate::Result<i32> {
     let row = c.query_one(
-        "INSERT INTO fvks(extfvk) VALUES ($1)
+        "INSERT INTO fvks(extfvk, diversifier_low, diversifier_high) VALUES ($1, 0, 0)
             ON CONFLICT (extfvk) DO UPDATE SET
             extfvk = excluded.extfvk
             RETURNING id_fvk",
@@ -97,11 +97,13 @@ pub fn import_address<C: GenericClient>(c: &mut C, address: &str) -> crate::Resu
 pub fn generate_address<P: Parameters, C: GenericClient>(
     network: &P,
     c: &mut C,
-    id_fvk: i32,
-    diversifier_index: u128,
-) -> std::result::Result<(i32, String, u128), WalletError> {
-    let row = c.query_one("SELECT extfvk FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
+    id_fvk: i32
+) -> std::result::Result<(i32, String), WalletError> {
+    let row = c.query_one("SELECT extfvk, diversifier_low, diversifier_high FROM fvks WHERE id_fvk = $1", &[&id_fvk])?;
     let key: String = row.get(0);
+    let di_low: u128 = row.get::<_, i64>(1) as u128;
+    let di_high: u128 = row.get::<_, i64>(2) as u128;
+    let diversifier_index = di_high << 64 | di_low;
     let fvk = decode_extended_full_viewing_key(network.hrp_sapling_extended_full_viewing_key(), &key)
         .map_err(WalletError::Bech32)?
         .ok_or(WalletError::IncorrectHrpExtFvk)?;
@@ -116,7 +118,10 @@ pub fn generate_address<P: Parameters, C: GenericClient>(
     let mut di_bytes = [0u8; 16];
     di_bytes[..11].copy_from_slice(&di.0);
     let diversifier_index_out = u128::from_le_bytes(di_bytes);
+    let di_low = diversifier_index_out as i64;
+    let di_high = (diversifier_index_out >> 64) as i64;
 
+    c.execute("UPDATE fvks SET diversifier_low = $1, diversifier_high = $2 WHERE id_fvk = $3", &[&di_low, &di_high, &id_fvk])?;
     let row = c.query_one(
         "INSERT INTO accounts(fvk, address)
             VALUES ($1, $2)
@@ -128,7 +133,7 @@ pub fn generate_address<P: Parameters, C: GenericClient>(
 
     ACCOUNTS.inc();
 
-    Ok((account, address, diversifier_index_out))
+    Ok((account, address))
 }
 
 pub fn get_spendable_notes_by_address<C: GenericClient>(

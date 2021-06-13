@@ -35,11 +35,11 @@ grpcurl -import-path proto -proto api.proto -plaintext \
 localhost:3001 zams.BlockExplorer.ImportPublicKey
 
 grpcurl -import-path proto -proto api.proto -plaintext \
--d '{"id_fvk": 4, "diversifier_high": 0, "diversifier_low": 5}' \
+-d '{"id": 1}' \
 localhost:3001 zams.BlockExplorer.NewAccount
 
 grpcurl -import-path proto -proto api.proto -plaintext \
--d '{"pubkey_cursor": {"id_fvk": 1, "diversifier_high": 0, "diversifier_low": 5}, "count": 1000}' \
+-d '{"id_pubkey": 2, "count": 1000}' \
 localhost:3001 zams.BlockExplorer.BatchNewAccounts
 
 grpcurl -import-path proto -proto api.proto -plaintext \

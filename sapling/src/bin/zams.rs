@@ -224,63 +224,43 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
 
     async fn new_account(
         &self,
-        request: Request<grpc::PubKeyCursor>,
-    ) -> Result<Response<grpc::AccountCursor>, Status> {
+        request: Request<grpc::PubKeyId>,
+    ) -> Result<Response<grpc::AccountAddress>, Status> {
         let request = request.into_inner();
-        let diversifier_index =
-            (request.diversifier_high as u128) << 64 | request.diversifier_low as u128;
         let account = block_in_place(|| {
             let mut client = self.client.lock().unwrap();
-            let (id_account, address, di) = generate_address(
+            let (id_account, address) = generate_address(
                 self.config.network,
                 &mut *client,
-                request.id_fvk,
-                diversifier_index,
-            )
-            .unwrap();
-            grpc::AccountCursor {
+                request.id
+            )?;
+            Ok::<_, WalletError>(grpc::AccountAddress {
                 id_account,
                 address,
-                diversifier_high: (di >> 64) as u64,
-                diversifier_low: di as u64,
-            }
-        });
+            })
+        })?;
         Ok(Response::new(account))
     }
 
     async fn batch_new_accounts(
         &self,
         request: Request<grpc::BatchNewAccountsRequest>,
-    ) -> Result<Response<grpc::AccountCursor>, Status> {
+    ) -> Result<Response<grpc::Empty>, Status> {
         let request = request.into_inner();
-        let pubkey_cursor = request.pubkey_cursor.unwrap();
-        let mut diversifier_index =
-            (pubkey_cursor.diversifier_high as u128) << 64 | pubkey_cursor.diversifier_low as u128;
         let count = request.count as usize;
-        let account = block_in_place(|| {
+        block_in_place(|| {
             let mut client = self.client.lock().unwrap();
-            let mut account_cursor = None;
             for _ in 0..count {
-                let (id_account, address, di) = generate_address(
+                generate_address(
                     self.config.network,
                     &mut *client,
-                    pubkey_cursor.id_fvk,
-                    diversifier_index,
+                    request.id_pubkey
                 )
                 .unwrap();
-                diversifier_index = di;
-                account_cursor = Some(grpc::AccountCursor {
-                    id_account,
-                    address,
-                    diversifier_high: (di >> 64) as u64,
-                    diversifier_low: di as u64,
-                });
             }
-            account_cursor
-        });
-        Ok(Response::new(
-            account.ok_or_else(|| WalletError::from(anyhow::anyhow!("")))?,
-        ))
+            Ok::<_, WalletError>(())
+        })?;
+        Ok(Response::new(grpc::Empty {}))
     }
 }
 

@@ -30,7 +30,6 @@ enum Command {
     },
     GenerateNewAddress {
         id_fvk: i32,
-        diversifier_index: u128,
     },
     GetBalance {
         account: i32,
@@ -86,11 +85,10 @@ fn main() {
         }
         Command::GenerateNewAddress {
             id_fvk,
-            diversifier_index,
         } => {
             let mut client = c.lock().unwrap();
-            let (id_account, addr, di) = generate_address(config.network, &mut *client, id_fvk, diversifier_index).unwrap();
-            println!("New account {} generated with address {}. Next diversifier: {}", id_account, &addr, di);
+            let (id_account, addr) = generate_address(config.network, &mut *client, id_fvk).unwrap();
+            println!("New account {} generated with address {}", id_account, &addr);
         }
         Command::GetBalance { account, min_confirmations } => {
             let mut client = c.lock().unwrap();
