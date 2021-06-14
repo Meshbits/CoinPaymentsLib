@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Grpc.Core;
 using Zams;
@@ -9,8 +10,10 @@ public enum ConfirmationSpeed {
 public interface IBlockExplorer {
     Task<bool> ValidateAddress(string address, ulong amount, bool tracked);
     Task<Balance> GetAccountBalance(int accountId, uint minConfirmations);
-    Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, ulong amount, ulong fee);
-    Task<string> BroadcastSignedTx(string signedTx);
+    Task<UnsignedTx> PrepareUnsignedTx(int fromAccount, string toAddress, int changeAccount, ulong amount);
+    Task CancelUnsignedTx(int paymendId);
+
+    Task<string> BroadcastSignedTx(SignedTx signedTx);
     Task<Fee> EstimateFee(ConfirmationSpeed speed, bool shielded);
 
     Task<uint> GetCurrentHeight();
@@ -23,7 +26,7 @@ public interface IBlockExplorer {
 
     Task<int> ImportPublicKeyPackage(PubKey pubkey);
 
-    Task<AccountAddress> NewSaplingAccount(int idFvk);
+    Task<AccountAddress> NewSaplingAccount(int fvkId);
 }
 
 public class BlockExplorer : IBlockExplorer
@@ -79,14 +82,28 @@ public class BlockExplorer : IBlockExplorer
     return res;
   }
 
-  public Task<string> PrepareUnsignedTx(string addressFrom, string addressTo, ulong amount, ulong fee)
+  public async Task<UnsignedTx> PrepareUnsignedTx(int fromAccount, string toAddress, int changeAccount, ulong amount)
   {
-    throw new System.NotImplementedException();
+    var req = new PrepareUnsignedTxRequest();
+    req.Amount = amount;
+    req.FromAccount = fromAccount;
+    req.ChangeAccount = changeAccount;
+    req.ToAddress = toAddress;
+    req.Timestamp = (ulong)DateTimeOffset.Now.ToUnixTimeSeconds();
+    var res = await client.PrepareUnsignedTxAsync(req);
+    return res;
   }
 
-  public Task<string> BroadcastSignedTx(string signedTx)
+  public async Task CancelUnsignedTx(int paymendId) {
+    var req = new PaymentId();
+    req.Id = paymendId;
+    await client.CancelTxAsync(req);
+  }
+
+  public async Task<string> BroadcastSignedTx(SignedTx signedTx)
   {
-    throw new System.NotImplementedException();
+    var res = await client.BroadcastSignedTxAsync(signedTx);
+    return res.Hash;
   }
 
   public async Task Rewind(uint height)

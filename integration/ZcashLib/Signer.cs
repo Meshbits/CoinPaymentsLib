@@ -6,6 +6,8 @@ public interface ISigner
 {
   Task<Keys> GenerateTransparentKey(Entropy entropy);
   Task<Keys> GenerateSaplingKey(Entropy entropy);
+
+  Task<SignedTx> SignTx(string sk, UnsignedTx tx);
 }
 
 sealed public class Signer : ISigner
@@ -15,15 +17,23 @@ sealed public class Signer : ISigner
     this.client = new Zams.Signer.SignerClient(channel);
   }
 
-  async public Task<Keys> GenerateTransparentKey(Entropy entropy) {
-    var keys = await this.client.GenerateTransparentKeyAsync(entropy);
+  public async Task<Keys> GenerateTransparentKey(Entropy entropy) {
+    var keys = await client.GenerateTransparentKeyAsync(entropy);
     return keys;
   }
 
-  async public Task<Keys> GenerateSaplingKey(Entropy entropy)
+  public async Task<Keys> GenerateSaplingKey(Entropy entropy)
   {
-    var keys = await this.client.GenerateSaplingKeyAsync(entropy);
+    var keys = await client.GenerateSaplingKeyAsync(entropy);
     return keys;
+  }
+
+  public async Task<SignedTx> SignTx(string sk, UnsignedTx tx) {
+    var req = new SignTxRequest();
+    req.SecretKey = sk;
+    req.UnsignedTx = tx;
+    var res = await client.SignTxAsync(req);
+    return res;
   }
 
   readonly Zams.Signer.SignerClient client;

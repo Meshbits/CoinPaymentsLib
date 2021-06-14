@@ -23,4 +23,7 @@
     <ProjectReference Include="..\ZcashLib\ZcashLib.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="tx.json" />
+  </ItemGroup>
 </Project>
