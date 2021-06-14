@@ -8,7 +8,7 @@ public interface ISigner
   Task<Keys> GenerateSaplingKey(Entropy entropy);
 }
 
-sealed class Signer : ISigner
+sealed public class Signer : ISigner
 {
   public Signer(string url) {
     var channel = new Channel(url, ChannelCredentials.Insecure);
