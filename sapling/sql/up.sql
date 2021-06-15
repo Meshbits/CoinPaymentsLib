@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE UNIQUE INDEX account_address ON accounts(address);
 CREATE TABLE IF NOT EXISTS payments (
     id_payment INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    datetime timestamp NOT NULL,
+    datetime TIMESTAMP NOT NULL,
     account INTEGER NOT NULL,
     sender TEXT NOT NULL,
     recipient TEXT NOT NULL,
@@ -83,11 +83,6 @@ CREATE TABLE IF NOT EXISTS sent_notes (
     FOREIGN KEY (from_account) REFERENCES accounts(account),
     CONSTRAINT tx_send_output UNIQUE (tx, output_index)
 );
--- CREATE TABLE IF NOT EXISTS chaintip (
---     id INTEGER NOT NULL PRIMARY KEY,
---     height INTEGER NOT NULL,
---     FOREIGN KEY (height) REFERENCES blocks(height)
--- );
 CREATE TABLE IF NOT EXISTS utxos (
     id_utxo INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     tx_hash BYTEA NOT NULL,
@@ -105,3 +100,15 @@ CREATE TABLE IF NOT EXISTS utxos (
 );
 CREATE INDEX utxo_tx ON utxos(tx_hash);
 CREATE UNIQUE INDEX utxo_tx_idx ON utxos(tx_hash, output_index);
+CREATE TABLE IF NOT EXISTS notifications (
+    id_notification INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    datetime TIMESTAMP NOT NULL,
+    outgoing BOOL NOT NULL,
+    tx_hash BYTEA NOT NULL,
+    account INT NOT NULL,
+    tx_output_index INT NOT NULL,
+    amount BIGINT NOT NULL,
+    block INT NOT NULL,
+    delivered BOOL NOT NULL,
+    CONSTRAINT notification_output UNIQUE (tx_hash, tx_output_index, outgoing)
+);

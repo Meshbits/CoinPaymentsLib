@@ -12,6 +12,7 @@ pub enum WalletError {
     Postgres(postgres::Error),
     Tonic(tonic::Status),
     TxBuilder(zcash_primitives::transaction::builder::Error),
+    Reqwest(reqwest::Error),
     Reorg,
 }
 
@@ -48,6 +49,12 @@ impl From<hex::FromHexError> for WalletError {
 impl From<zcash_primitives::transaction::builder::Error> for WalletError {
     fn from(e: zcash_primitives::transaction::builder::Error) -> Self {
         WalletError::TxBuilder(e)
+    }
+}
+
+impl From<reqwest::Error> for WalletError {
+    fn from(e: reqwest::Error) -> Self {
+        WalletError::Reqwest(e)
     }
 }
 

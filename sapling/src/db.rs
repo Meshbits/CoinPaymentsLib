@@ -17,6 +17,7 @@ use zcash_primitives::zip32::DiversifierIndex;
 use crate::zams_rpc as grpc;
 use crate::trp::zcashdrpc::get_latest_height;
 use crate::perfcounters::ACCOUNTS;
+use crate::notification::NotificationRecord;
 
 pub struct DbPreparedStatements {
     pub stmt_select_sapling_notes: Statement,
@@ -394,6 +395,54 @@ pub fn list_pending_payments<C: GenericClient>(client: &mut C, id_account: i32) 
     Ok(rows.iter().map(|row| row.get::<_, i32>(0)).collect())
 }
 
+pub fn store_notification<C: GenericClient>(client: &mut C, notification_record: &NotificationRecord) -> crate::Result<()> {
+    let datetime = SystemTime::now();
+    let outgoing = notification_record.eventType == "outgoingTx";
+    client.execute("INSERT INTO notifications(datetime, outgoing, tx_hash, account, tx_output_index, amount, block, delivered)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
+    ON CONFLICT ON CONSTRAINT notification_output DO NOTHING", &[
+        &datetime,
+        &outgoing,
+        &hex::decode(&notification_record.txHash).unwrap(),
+        &notification_record.account,
+        &notification_record.txOutputIndex,
+        &notification_record.amount,
+        &(notification_record.block as i32),
+    ])?;
+    Ok(())
+}
+
+pub fn mark_delivered<C: GenericClient>(client: &mut C, id_notification: i32) -> crate::Result<()> {
+    client.execute("UPDATE notifications SET delivered = TRUE WHERE id_notification = $1", &[&id_notification])?;
+    Ok(())
+}
+
+pub fn list_undelivered<C: GenericClient>(client: &mut C) -> crate::Result<Vec<NotificationRecord>> {
+    let rows = client.query("SELECT id_notification, outgoing, tx_hash, a.account, address, tx_output_index, amount, block \
+    FROM notifications n, accounts a WHERE n.account = a.account AND n.delivered = FALSE", &[])?;
+    let notification_records: Vec<_> = rows.into_iter().map(|row| {
+        let id: i32 = row.get(0);
+        let outgoing: bool = row.get(1);
+        let tx_hash: Vec<u8> = row.get(2);
+        let account: i32 = row.get(3);
+        let address: String = row.get(4);
+        let tx_output_index: i32 = row.get(5);
+        let amount: i64 = row.get(6);
+        let block: i32 = row.get(7);
+        NotificationRecord {
+            id,
+            eventType: if outgoing { "outgoingTx".to_string() } else { "incomingTx".to_string() },
+            txHash: hex::encode(tx_hash),
+            account,
+            address: Some(address),
+            txOutputIndex: tx_output_index,
+            amount,
+            block: block as u32,
+        }
+    }).collect();
+    Ok(notification_records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,3 +485,4 @@ mod tests {
         get_payment_info(&mut client, 2).unwrap();
     }
 }
+

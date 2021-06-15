@@ -1,4 +1,4 @@
-use crate::db::{trp_rewind_to_height, DbPreparedStatements};
+use crate::db::{trp_rewind_to_height, DbPreparedStatements, store_notification};
 use crate::error::WalletError;
 use crate::trp::zcashdrpc::{get_block, Block, Transaction};
 
@@ -10,6 +10,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 use crate::{db, ZATPERZEC, ZamsConfig};
+use crate::notification::NotificationRecord;
 
 pub mod zcashdrpc;
 
@@ -68,14 +69,16 @@ impl TrpWallet {
         })
     }
 
-    fn scan_inputs(&self, tx: &Transaction, client: &mut Client) -> Result<(), WalletError> {
+    fn scan_inputs(&self, tx: &Transaction, notifications: &mut Vec<NotificationRecord>, client: &mut Client) -> Result<(), WalletError> {
         for input in tx.vin.iter() {
             if let Some(ref address) = input.address {
                 if let Some(account) = self.addresses.get(address.as_str()) {
                     crate::perfcounters::RECEIVED_NOTES.inc();
                     crate::perfcounters::RECEIVED_AMOUNT.inc_by((input.valueSat.unwrap() as f64) / ZATPERZEC);
-                    let txid = hex::decode(input.txid.as_ref().unwrap())?;
+                    let tx_hash = input.txid.as_ref().unwrap().clone();
+                    let txid = hex::decode(&tx_hash)?;
                     let script: Vec<u8> = vec![];
+                    let amount = input.valueSat.unwrap() as i64;
                     client.execute(
                         &self.statements.upsert_spent_utxo,
                         &[
@@ -83,24 +86,36 @@ impl TrpWallet {
                             account,
                             address,
                             &(input.vout.unwrap() as i32),
-                            &(input.valueSat.unwrap() as i64),
+                            &amount,
                             &script,
                             &0,
                             &true,
                             &(tx.height.unwrap() as i32),
                         ],
                     )?;
+                    let notification = NotificationRecord {
+                        id: 0, // ignored
+                        eventType: "outgoingTx".to_string(),
+                        txHash: tx_hash,
+                        account: *account,
+                        address: None,
+                        txOutputIndex: input.vout.unwrap() as i32,
+                        amount,
+                        block: tx.height.unwrap(),
+                    };
+                    notifications.push(notification);
                 }
             }
         }
         Ok(())
     }
 
-    fn scan_outputs(&self, tx: &Transaction, client: &mut Client) -> Result<(), WalletError> {
+    fn scan_outputs(&self, tx: &Transaction, notifications: &mut Vec<NotificationRecord>, client: &mut Client) -> Result<(), WalletError> {
         for (index, output) in tx.vout.iter().enumerate() {
             for address in output.scriptPubKey.addresses.iter() {
                 if let Some(account) = self.addresses.get(address.as_str()) {
                     let txid = hex::decode(&tx.txid)?;
+                    let amount = output.valueSat as i64;
                     client.execute(
                         &self.statements.upsert_spent_utxo,
                         &[
@@ -108,13 +123,24 @@ impl TrpWallet {
                             account,
                             address,
                             &(index as i32),
-                            &(output.valueSat as i64),
+                            &amount,
                             &hex::decode(&output.scriptPubKey.hex).unwrap(),
                             &(tx.height.unwrap() as i32),
                             &false,
                             &Option::<i32>::None,
                         ],
                     )?;
+                    let notification = NotificationRecord {
+                        id: 0, // ignored
+                        eventType: "incomingTx".to_string(),
+                        txHash: tx.txid.clone(),
+                        account: *account,
+                        address: None,
+                        txOutputIndex: index as i32,
+                        amount,
+                        block: tx.height.unwrap(),
+                    };
+                    notifications.push(notification);
                 }
             }
         }
@@ -133,16 +159,22 @@ impl TrpWallet {
         &mut self,
         range: Range<u32>
     ) -> Result<(), WalletError> {
+        let mut notifications: Vec<NotificationRecord> = Vec::new();
         let source = BlockSource::new(self.client.clone(), &self.config);
         source.with_blocks(range, |block| {
             let mut c = self.client.lock().unwrap();
             for tx in block.tx.iter() {
-                self.scan_inputs(tx, &mut *c)?;
-                self.scan_outputs(tx, &mut *c)?;
+                self.scan_inputs(tx, &mut notifications, &mut *c)?;
+                self.scan_outputs(tx, &mut notifications, &mut *c)?;
                 crate::perfcounters::TRANSACTIONS.inc();
             }
             Ok(())
-        })
+        })?;
+        let mut c = self.client.lock().unwrap();
+        for n in notifications.iter() {
+            store_notification(&mut *c, n)?;
+        }
+        Ok(())
     }
 
     pub fn rewind_to_height(&self, height: u32) -> Result<(), WalletError> {

@@ -12,6 +12,7 @@ use std::ops::Range;
 use std::sync::{Mutex, Arc};
 use crate::config::ZamsConfig;
 use crate::trp::zcashdrpc::{get_block, get_latest_height, get_tree_state};
+use crate::notification::notify_tx;
 
 const MAX_CHUNK: u32 = 1000;
 
@@ -90,7 +91,6 @@ pub fn get_scan_range(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow
         opt.map(|(_, max)| u32::from(max))
             .unwrap_or(sapling_activation_height - 1)
     })? + 1;
-    let _r = Runtime::new().unwrap();
     let tip_height = get_latest_height(config)? + 1;
     let to_height = tip_height.min(from_height + MAX_CHUNK);
     Ok(from_height..to_height)
@@ -122,6 +122,8 @@ pub fn scan_chain(client: Arc<Mutex<Client>>, config: &ZamsConfig) -> anyhow::Re
             _ => scan_result?,
         }
     };
+    let mut c = client.lock().unwrap();
+    let _ = notify_tx(&mut *c, config); // ignore failures - will retry
 
     Ok(range.end)
 }

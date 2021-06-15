@@ -9,6 +9,7 @@ pub struct ZamsConfig {
     pub rpc_password: String,
     pub port: u16,
     pub connection_string: String,
+    pub notification_url: String,
 }
 
 impl ZamsConfig {
@@ -22,6 +23,7 @@ impl ZamsConfig {
         let connection_string = conf.get("zams", "connection_string").unwrap();
         let testnet = conf.getbool("zams", "testnet").unwrap().unwrap_or(false);
         let network = if testnet { &TestNetwork } else { &MainNetwork };
+        let notification_url = conf.get("zams", "notification_url").unwrap();
         ZamsConfig {
             network,
             zcashd,
@@ -29,6 +31,7 @@ impl ZamsConfig {
             rpc_password,
             port,
             connection_string,
+            notification_url,
         }
     }
 }

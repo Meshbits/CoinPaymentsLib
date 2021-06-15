@@ -30,6 +30,8 @@ use zcash_primitives::transaction::components::Amount;
 use zcash_primitives::transaction::{Transaction, TxId};
 use zcash_primitives::zip32::{ExtendedFullViewingKey};
 use crate::{ZamsConfig, ZATPERZEC};
+use crate::db::store_notification;
+use crate::notification::NotificationRecord;
 
 pub mod scan;
 pub mod shielded_output;
@@ -328,6 +330,20 @@ impl<'a> WalletDbTransaction<'a> {
             .map(|row| row.get(0))
             .map_err(WalletError::Postgres)
     }
+
+    pub fn get_account_by_nf(&mut self, nf: &Nullifier) -> crate::Result<(i32, i64)> {
+        let nf = nf.to_vec();
+        let row = self.transaction.query_one("SELECT account, value FROM received_notes WHERE nf = $1", &[&nf])?;
+        let account: i32 = row.get(0);
+        let amount: i64 = row.get(1);
+        Ok((account, amount))
+    }
+
+    pub fn get_account_by_address(&mut self, address: &str) -> crate::Result<i32> {
+        let row = self.transaction.query_one("SELECT account FROM accounts WHERE address = $1", &[&address])?;
+        let account: i32 = row.get(0);
+        Ok(account)
+    }
 }
 
 type WitnessVec = Vec<(i32, IncrementalWitness<Node>)>;
@@ -536,50 +552,87 @@ impl WalletWrite for PostgresWallet {
         updated_witnesses: &[(Self::NoteRef, IncrementalWitness<Node>)],
     ) -> Result<WitnessVec, Self::Error> {
         let mut client = self.client.lock().unwrap();
-        let mut db_tx = WalletDbTransaction {
-            network: self.network,
-            statements: self,
-            transaction: client.transaction()?,
+        let mut notifications: Vec<NotificationRecord> = Vec::new();
+        let new_witnesses = {
+            let mut db_tx = WalletDbTransaction {
+                network: self.network,
+                statements: self,
+                transaction: client.transaction()?,
+            };
+
+
+            // Insert the block into the database.
+            db_tx.insert_block(
+                block.block_height,
+                block.block_hash,
+                block.block_time,
+                &block.commitment_tree,
+            )?;
+
+            let mut new_witnesses = vec![];
+            for tx in block.transactions {
+                let tx_row = db_tx.put_tx_meta(&tx, block.block_height)?;
+                let tx_hash = hex::encode(tx.txid.0.to_vec());
+
+                // Mark notes as spent and remove them from the scanning cache
+                for spend in &tx.shielded_spends {
+                    db_tx.mark_spent(tx_row, &spend.nf)?;
+                    let (account, amount) = db_tx.get_account_by_nf(&spend.nf)?;
+
+                    let notification = NotificationRecord {
+                        id: 0, // ignored
+                        eventType: "outgoingTx".to_string(),
+                        txHash: tx_hash.clone(),
+                        account,
+                        address: None, // ignored
+                        txOutputIndex: spend.index as i32,
+                        amount,
+                        block: u32::from(block.block_height),
+                    };
+                    notifications.push(notification);
+                }
+
+                for output in &tx.shielded_outputs {
+                    let received_note_id = db_tx.put_received_note(output, tx_row)?;
+
+                    // Save witness for note.
+                    new_witnesses.push((received_note_id, output.witness.clone()));
+
+                    let address = encode_payment_address(self.network.hrp_sapling_payment_address(), output.to());
+                    let account = db_tx.get_account_by_address(&address)?;
+                    let notification = NotificationRecord {
+                        id: 0, // ignored
+                        eventType: "incomingTx".to_string(),
+                        txHash: tx_hash.clone(),
+                        account,
+                        address: None,
+                        txOutputIndex: output.index as i32,
+                        amount: output.note.value as i64,
+                        block: u32::from(block.block_height),
+                    };
+                    notifications.push(notification);
+                }
+            }
+
+            // Insert current new_witnesses into the database.
+            for (received_note_id, witness) in updated_witnesses.iter().chain(new_witnesses.iter()) {
+                let rnid = *received_note_id;
+                db_tx.insert_witness(rnid, witness, block.block_height)?;
+            }
+
+            // Prune the stored witnesses (we only expect rollbacks of at most 100 blocks).
+            db_tx.prune_witnesses(block.block_height - 100)?;
+
+            // Update now-expired transactions that didn't get mined.
+            db_tx.update_expired_notes(block.block_height)?;
+
+            db_tx.transaction.commit()?;
+            new_witnesses
         };
 
-        // Insert the block into the database.
-        db_tx.insert_block(
-            block.block_height,
-            block.block_hash,
-            block.block_time,
-            &block.commitment_tree,
-        )?;
-
-        let mut new_witnesses = vec![];
-        for tx in block.transactions {
-            let tx_row = db_tx.put_tx_meta(&tx, block.block_height)?;
-
-            // Mark notes as spent and remove them from the scanning cache
-            for spend in &tx.shielded_spends {
-                db_tx.mark_spent(tx_row, &spend.nf)?;
-            }
-
-            for output in &tx.shielded_outputs {
-                let received_note_id = db_tx.put_received_note(output, tx_row)?;
-
-                // Save witness for note.
-                new_witnesses.push((received_note_id, output.witness.clone()));
-            }
+        for n in notifications {
+            store_notification(&mut *client, &n)?;
         }
-
-        // Insert current new_witnesses into the database.
-        for (received_note_id, witness) in updated_witnesses.iter().chain(new_witnesses.iter()) {
-            let rnid = *received_note_id;
-            db_tx.insert_witness(rnid, witness, block.block_height)?;
-        }
-
-        // Prune the stored witnesses (we only expect rollbacks of at most 100 blocks).
-        db_tx.prune_witnesses(block.block_height - 100)?;
-
-        // Update now-expired transactions that didn't get mined.
-        db_tx.update_expired_notes(block.block_height)?;
-
-        db_tx.transaction.commit()?;
         Ok(new_witnesses)
     }
 

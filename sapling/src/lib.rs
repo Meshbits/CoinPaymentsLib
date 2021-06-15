@@ -11,6 +11,7 @@ mod keys;
 mod perfcounters;
 mod trp;
 mod wallet;
+mod notification;
 mod utils;
 
 pub use crate::config::ZamsConfig;
