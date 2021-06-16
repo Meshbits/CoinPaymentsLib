@@ -1,11 +1,11 @@
 use clap::Clap;
 use rand::thread_rng;
-use sapling::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, import_fvk};
+use zams::{broadcast_tx, load_checkpoint, prepare_tx, rewind_to_height, scan_chain, sign_tx, import_fvk};
 use postgres::{NoTls, Client};
-use sapling::{DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
+use zams::{DbPreparedStatements, get_balance, import_address, generate_address, cancel_payment};
 use std::time::SystemTime;
 use std::sync::{Mutex, Arc};
-use sapling::config::ZamsConfig;
+use zams::config::ZamsConfig;
 
 #[derive(Clap)]
 struct CommandArgs {

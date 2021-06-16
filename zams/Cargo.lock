@@ -2322,48 +2322,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sapling"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bech32",
- "bytes",
- "chrono",
- "clap 3.0.0-beta.2",
- "configparser",
- "criterion",
- "ff",
- "flexi_logger",
- "futures 0.3.15",
- "hex",
- "jubjub",
- "lazy_static",
- "log",
- "postgres",
- "prometheus",
- "prost",
- "protobuf",
- "rand 0.8.3",
- "reqwest",
- "ripemd160",
- "secp256k1",
- "serde",
- "serde_json",
- "sha2 0.9.5",
- "time 0.2.26",
- "tiny-bip39",
- "tiny-hderive",
- "tokio",
- "toml",
- "tonic",
- "tonic-build",
- "warp",
- "zcash_client_backend",
- "zcash_primitives",
- "zcash_proofs",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3467,6 +3425,48 @@ name = "yansi"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fc79f4a1e39857fc00c3f662cbf2651c771f00e9c15fe2abc341806bd46bd71"
+
+[[package]]
+name = "zams"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bech32",
+ "bytes",
+ "chrono",
+ "clap 3.0.0-beta.2",
+ "configparser",
+ "criterion",
+ "ff",
+ "flexi_logger",
+ "futures 0.3.15",
+ "hex",
+ "jubjub",
+ "lazy_static",
+ "log",
+ "postgres",
+ "prometheus",
+ "prost",
+ "protobuf",
+ "rand 0.8.3",
+ "reqwest",
+ "ripemd160",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2 0.9.5",
+ "time 0.2.26",
+ "tiny-bip39",
+ "tiny-hderive",
+ "tokio",
+ "toml",
+ "tonic",
+ "tonic-build",
+ "warp",
+ "zcash_client_backend",
+ "zcash_primitives",
+ "zcash_proofs",
+]
 
 [[package]]
 name = "zcash_client_backend"

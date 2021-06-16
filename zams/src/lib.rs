@@ -30,4 +30,4 @@ pub use crate::wallet::transaction::{broadcast_tx, prepare_tx, sign_tx};
 
 pub const ZATPERZEC: f64 = 1e8;
 
-pub const VERSION: &str = "1.0";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

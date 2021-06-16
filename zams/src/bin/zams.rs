@@ -1,14 +1,14 @@
-use sapling::error::WalletError;
+use zams::error::WalletError;
 use std::net::{Ipv4Addr, SocketAddr};
 use tonic::transport::Server;
 
 use postgres::{Client, NoTls};
-use sapling::{broadcast_tx, prepare_tx, scan_chain, ZamsConfig};
-use sapling::{
+use zams::{broadcast_tx, prepare_tx, scan_chain, ZamsConfig};
+use zams::{
     cancel_payment, generate_address, get_balance, get_latest_height, get_payment_info,
     import_address, import_fvk, list_pending_payments, rewind_to_height, DbPreparedStatements,
 };
-use sapling::{register_custom_metrics, metrics_handler, REQUESTS};
+use zams::{register_custom_metrics, metrics_handler, REQUESTS};
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
 
@@ -19,7 +19,7 @@ use tokio::task::block_in_place;
 
 use chrono::{DateTime, Local};
 use flexi_logger::{Age, Cleanup, Criterion, Logger, Naming};
-use sapling::zams_rpc as grpc;
+use zams::zams_rpc as grpc;
 use zcash_client_backend::address::RecipientAddress;
 use zcash_primitives::transaction::components::amount::DEFAULT_FEE;
 use warp::Filter;
@@ -56,7 +56,7 @@ impl grpc::block_explorer_server::BlockExplorer for ZAMS {
         _request: Request<grpc::Empty>,
     ) -> Result<Response<grpc::VersionReply>, Status> {
         Ok(Response::new(grpc::VersionReply {
-            version: sapling::VERSION.to_string(),
+            version: zams::VERSION.to_string(),
         }))
     }
 

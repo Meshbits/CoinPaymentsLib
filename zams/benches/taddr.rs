@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use sapling::{ZamsConfig, TrpWallet, populate_taddr};
+use zams::{ZamsConfig, TrpWallet, populate_taddr};
 use std::sync::{Arc, Mutex};
 use postgres::{Client, NoTls};
 

@@ -11,6 +11,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="..\..\sapling\proto\api.proto" Link="proto\api.proto" />
+    <Protobuf Include="..\..\zams\proto\api.proto" Link="proto\api.proto" />
   </ItemGroup>
 </Project>
