@@ -1,2 +1,3 @@
 - [Project Update: Jun 2021](2021-06-10-update)
 - [Build Instructions](build)
+- [Acceptance Test](acceptance-test)

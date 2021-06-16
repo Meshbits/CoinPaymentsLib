@@ -30,7 +30,7 @@ namespace ZcashLib.Tests
         [Fact]
         public async void GetBalanceTest() {
             var explorer = new BlockExplorer("localhost:3001");
-            var balance = await explorer.GetAccountBalance(2, 10);
+            var balance = await explorer.GetAccountBalance(1, 10);
             Console.WriteLine("{0}", balance);
         }
 
@@ -45,7 +45,7 @@ namespace ZcashLib.Tests
         public async void PrepareTxTest() {
             var explorer = new BlockExplorer("localhost:3001");
             await explorer.CancelUnsignedTx(1);
-            var tx = await explorer.PrepareUnsignedTx(2, "ztestsapling1zhu3ppsnhhjt0p262cynnshdduucrq4eu73fp65mwyvhn0nr2phvh9n0alym9huzzvrxjvuaqgd", 2, 1000000);
+            var tx = await explorer.PrepareUnsignedTx(1, "ztestsapling1zhu3ppsnhhjt0p262cynnshdduucrq4eu73fp65mwyvhn0nr2phvh9n0alym9huzzvrxjvuaqgd", 1, 1000000);
             var formatter = new JsonFormatter(JsonFormatter.Settings.Default);
             var txStr = formatter.Format(tx);
             await explorer.CancelUnsignedTx(tx.Id);
